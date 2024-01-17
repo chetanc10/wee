@@ -176,24 +176,41 @@ sdk ()
 				return -1
 		esac
 	done
-	local tdir="${gSdkDirs[$dname]}"
-	[ -z "${tdir}" ] && echo2 "${ustr}" && return -1
+	local localDir="${gSdkDirs[$dname]}"
+	[ -z "${localDir}" ] && echo2 "$(_sdk_ustr)" && return -1
 	if [ -z "$platform" ]; then
+		local dirHandler=cdd ; local dirAction="cd"
 		if [ $showPath -eq 1 ]; then
-			abd .repo
-			local st=$?; [ $st -ne 0 ] && return $st
-			ls -d ${curd}/${tdir}
-		else
-			cdd .repo && cd ${tdir}
+			dirHandler=abd ; dirAction="ls -d"
 		fi
+		$dirHandler .repo >/tmp/wee_sdk_err && ${dirAction} ${curd}/${localDir} && return 0
+		$dirHandler .git >>/tmp/wee_sdk_err
+		if [ $? -eq 0 ]; then
+			local curdname="$(basename ${curd})"
+			# User may try cd to root of target non-.repo SDK
+			# Ensure we don't use dirname so we avoid /path-to/SDKdir/SDKdir situation
+			if [ "${curdname}" == "$(echo ${localDir} | cut -d '/' -f1)"  ]; then
+				# curd=/path-to/SDKdir
+				# 1. if localDir=SDKdir,  make localDir=.
+				# 2. if localDir=SDKdir/subdir/subdir1, make localDir="./subdir/subdir1"
+				[ "${curdname}" == "${localDir}" ] && localDir="." || localDir="./${localDir#*/}"
+			fi
+			${dirAction} ${curd}/${localDir} && return 0
+		fi
+		# 1. Current PWD is not part of .repo or .git (OR)
+		# 2. ${curd}/${localDir} doesn't exist
+		# And no platform doesn't always mean local sdk-dir.
+		# The sdk may need no platform specific info
+		# So, just try ${wee}/../${WEE_ENV_ID}/
+		# This is hard-coded approach if all cd attempts fail
+		${dirAction} ${wee}/../${WEE_ENV_ID}/${localDir}
 	else
+		origd="${PWD}"
+		_cdir ${wee}/../${WEE_ENV_ID}/$platform || return $?
 		if [ $showPath -eq 1 ]; then
-			curd="${PWD}"
-			_cdir ${wee}/../sdk/$platform
-			local st=$?; [ $st -ne 0 ] && return $st
-			ls -d ${PWD}/${tdir} && cd "${curd}"
+			ls -d ${PWD}/${localDir} && cd "${origd}"
 		else
-			_cdir ${wee}/../sdk/$platform && cd ${tdir} && pwd
+			cd ${localDir} && pwd
 		fi
 	fi
 	return $?
