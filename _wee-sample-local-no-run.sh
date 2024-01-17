@@ -2,7 +2,7 @@
 
 # If you need new wee local script for your work/sdk environment:
 # 1. make a copy of _wee-sample-local-no-run.sh
-# 2. rename it as wee-<custom-name>-local.sh
+# 2. rename it as wee-<SDKname>-local.sh (SDKname is used as identifier for this wee-env)
 # 3. NO_MODIFY blocks MUST NEVER BE modified
 # 4. DO_MODIFY blocks CAN BE modified/removed to suit dev-environment
 # 5. edit variable/function definitions per local server configuration
@@ -74,12 +74,10 @@ export gHTTPU="https://${gDom}"
 # sdks   : main src directory inside SDK
 # sdkb   : build directory inside SDK (created after build)
 # sdki   : image directory inside SDK (created after build)
-# sdkl   : linux kernel directory inside SDK
 declare -A gSdkDirs=( \
 	["sdk"]="sdk" \
 	["sdks"]="sdk/src/" \
 	["sdkb"]="sdk/build/target-*/linux-*generic/" \
-	["sdki"]="sdk/bin/target-*/" \
 	["sdkl"]="sdk/src/linux-5.4*/" \
 )
 
@@ -88,7 +86,7 @@ declare -A gSdkDirs=( \
 # with platform codes and platform descriptions
 declare -A gKnownPlatforms=( \
 	["imx6sll-evb"]="i.MX 6SLL EVB" \
-	["imx8-dc"]="i.MX 8 Dashcam" \
+	["imx8dc"]="i.MX 8 Dashcam" \
 )
 
 # DO_MODIFY
@@ -103,6 +101,13 @@ alias sdk="sdk"
 alias sdks="sdk -d sdks"
 alias sdkb="sdk -d sdkb"
 alias sdki="sdk -d sdki"
+
+# DO_MODIFY
+# . gSdkDirs dir-switch handler for wee-<sdk>-local.sh
+# . rename '_sdk' in below alias as per target sdk name
+# . e.g. project/SDK is named imx8dc (multiple clones of same proj/SDK
+#        for different variants can be present). Rename _sdk as imx8dc
+alias _sdk="sdk _sdk"
 
 # DO_MODIFY
 # Quick Gcc Toolchain accessor (QGT)
