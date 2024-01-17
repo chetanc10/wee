@@ -692,6 +692,7 @@ localwee_sourced=false
 if [ -n "$1" ]; then
 	# User chose localwee to source. Do as user wishes
 	[ -s "wee-$1-local.sh" ] && source "wee-$1-local.sh"
+	f="wee-$1-local.sh"
 elif [ ! -s ${wee}/default-localwee ]; then
 	_localwees=($(find ${wee}/ -maxdepth 1 -type f -name "wee-*local.sh"))
 	if [ ${#_localwees[@]} -eq 1 ]; then
@@ -714,14 +715,20 @@ else
 	# default-localwee is already set, source that localwee
 	f=$(cat ${wee}/default-localwee)
 	[ -s "${f}" ] && source "${f}"
+	unset _localwees
 fi
 # Flag success/failure of sourcing of localwee above
-[ $? -eq 0 ] && localwee_sourced=true
+if [ $? -eq 0 ]; then
+	localwee_sourced=true
+	wenv="$f"; wenv=${wenv%-*}; export WEE_ENV_ID=${wenv#*-}
+	unset wenv
+fi
+unset f
 
 #### sdk-env specific toolchain quick-access aliaes ####
 
 # Quick SDK Gcc Toolchain Access Aliases QGTAA
-if [ $localwee_sourced -eq 1 ] && [ -n "$(type _qgt)" ]; then
+if $localwee_sourced && [ -n "$(type _qgt 2>/dev/null)" ]; then
 	alias qaddr2line="_qgt addr2line "${@}""
 	alias qar="_qgt ar "${@}""
 	alias qas="_qgt as "${@}""
@@ -746,3 +753,5 @@ if [ $localwee_sourced -eq 1 ] && [ -n "$(type _qgt)" ]; then
 	alias qstrings="_qgt strings "${@}""
 	alias qstrip="_qgt strip "${@}""
 fi
+
+unset localwee_sourced
