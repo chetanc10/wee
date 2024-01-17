@@ -97,27 +97,35 @@ _cdir ()
 # NOTE: If gKnownPlatforms,gSdkDirs,etc variables are not defined by
 #       local-wee-env, _CheckIfKnown is either not called or it's
 #       return value is discarded
-# Return: 0 if entry is found in array,  1 if not
+# Return: 0 if entry is found in array, non-zero if not
 _CheckIfKnown ()
 {
+	# UPDATE THIS FOR EVERY GENERIC ARRAY BEING CHECKED IN WEE
+	declare -A key_name=( \
+		["gSdkDirs"]="SDK Dir" \
+		["gKnownPlatforms"]="Known Platform"
+	)
 	local entry="\<$1\>"
 	local -n keys="$3"
-   echo -e "\nkeys : ${!keys[@]}"
-	local vals="$3[@]"
-	echo -e "\nvals : ${!vals}"
-	if [ "$2" == "a" ]; then
-		[[ ${!keys[@]} =~ $entry ]] || return 1
-	else
-		[[ ${!vals} =~ $entry ]] || return 1
+	if [ -z "${!keys}" ]; then
+		echo "Discarding ${key_name[$keys]}s as it's undefined for $WEE_ENV_ID!"
+		return 2
 	fi
-	return 0
+	local vals="$3[@]"
+	if [ "$2" == "a" ]; then
+		[[ ${!keys[@]} =~ $entry ]] && return 0
+	else
+		[[ ${!vals} =~ $entry ]] && return 0
+	fi
+	echo "$entry: Entry not found in ${key_name[$keys]}s list"
+	return 1
 }
 
 _sdk_ustr()
 {
 	# Called ONLY by sdk() to display help-string
 	# as per environment!
-	echo "Usage: sdk [opts]
+	echo -e "Usage: sdk [opts]
 	opts: Optional arguments only
 	-h : display help message
 	-s : just shows target directory path"
@@ -153,26 +161,18 @@ sdk ()
 	while [[ $# -gt 0 ]]; do
 		opt="$1"; shift
 		case $opt in
-			-h) echo2 "${ustr}"; return 0 ;;
+			-h) echo2 "$(_sdk_ustr)"; return 0 ;;
 			-s) showPath=1 ;;
-			-d) _CheckIfKnown "$1" a "${gSdkDirs}"
-				if [ $? -ne 0 ]; then
-					echo2 "Unknown sdk-dir: $opt"
-					echo -e "$(_sdk_ustr)"
-					return -1
-				fi
+			-d) _CheckIfKnown "$1" a gSdkDirs
+				[ $? -ne 0 ] && echo2 "$(_sdk_ustr)" && return 1
 				dname=$1; shift
 				;;
-			-p) _CheckIfKnown "$1" a "${gKnownPlatforms}"
-				if [ $? -ne 0 ]; then
-					echo2 "Unknown platform: $opt"
-					echo -e "$(_sdk_ustr)"
-					return -1
-				fi
+			-p) _CheckIfKnown "$1" a gKnownPlatforms
+				[ $? -ne 0 ] && echo2 "$(_sdk_ustr)" && return 1
 				platform=$1; shift
 				;;
 			*) echo2 "Unknown option: $opt"
-				echo -e "$(_sdk_ustr)"
+				echo2 "$(_sdk_ustr)"
 				return -1
 		esac
 	done
