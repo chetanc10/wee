@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+
+usage()
+{
+    local name="$(basename $0)"
+    cat <<EOF
+Helps create and manage project-specific environment with variables, aliases and shell functions.
+wee is loaded on project directory entry and unloaded on project directory exit (using mise utility)
+
+Usage:
+  $name env <var[=value]>     -> With value, add new variable or delete existing variable
+  $name alias <name> [cmd...] -> With cmd..., add new alias or delete existing alias
+  $name func <name> [-]       -> With '-', add new function with user-specified body within command handler or delete existing
+                                 NOTE: test function body before adding (debugging functions in wee may be time-consuming)
+  $name show                  -> show env variables, aliases and function names defined for this project
+
+EOF
+    exit $1
+}
+
+[[ $# -lt 1 ]] && usage 0
+
+PROJECT_DIR="$(pwd)"
+MISE_TOML="$PROJECT_DIR/.mise.toml"
+SETUP="$PROJECT_DIR/.mise-setup.sh"
+CLEANUP="$PROJECT_DIR/.mise-cleanup.sh"
+
+ensure_files()
+{
+    if [[ ! -f $MISE_TOML ]]; then
+        read -rp "No .mise.toml found in $PROJECT_DIR. Create one here? (y|N): " confirm
+        case "$confirm" in
+            [yY][eE][sS]|[yY]) cp "$HOME/.config/mise/template.toml" "$MISE_TOML" && mise trust || exit 0 ;;
+            *) exit 0 ;;
+        esac
+    fi
+    [[ -f $SETUP ]] || echo '# Project setup' > "$SETUP"
+    [[ -f $CLEANUP ]] || echo '# Project cleanup' > "$CLEANUP"
+    return 0
+}
+
+wee-env()
+{
+    [[ -z "$1" ]] && echo "Need env argument(s)!" && return -1
+
+    local kv="${@}"
+    local var="${kv%%=*}"
+
+    # If var is empty, this is delete request $1 is 'key' with no '=value'
+    [[ -z $var ]] && mise unset "$1" && return 0
+
+    # This is creation request
+    ensure_files
+    local existing=$(mise env | grep "^export $var=")
+    if [[ -n $existing ]]; then
+        read -rp "'$var' already defined {$existing}. Overwrite? (y/N): " confirm
+        case "$confirm" in
+            [yY][eE][sS]|[yY]) ;;
+            *) echo "aborted" ; return 0 ;;
+        esac
+    fi
+    ! mise set "$kv" && echo "Failed to set env: $kv"
+
+    return 0
+}
+
+wee-alias()
+{
+    [[ $# -lt 1 ]] && echo "Need alias argument(s)!" && return -1
+
+    local name="$1"; shift
+    local cmd="$*"
+
+    # If cmd is empty, this is delete request
+    if [[ -z $cmd ]]; then
+        [[ ! -f $SETUP ]] && return 0
+        sed -i "/^alias $name=/d" "$SETUP"
+        sed -i "/^unalias $name /d" "$CLEANUP"
+        reload=" "
+        return 0
+    fi
+
+    # Handle create request
+    ensure_files
+    if grep -qE "^alias $name=" "$SETUP" 2>/dev/null; then
+        read -rp "Alias '$name' already exists. Overwrite? (y/N): " confirm
+        case "$confirm" in
+            [yY][eE][sS]|[yY])
+                sed -i "/^alias $name=/d" "$SETUP"
+                sed -i "/^unalias $name /d" "$SETUP" "$CLEANUP" ;;
+            *) return 0 ;;
+        esac
+    fi
+    echo "alias $name='$cmd'" >> "$SETUP"
+    echo "unalias $name 2>/dev/null" >> "$CLEANUP"
+    reload=" "
+
+    return 0
+}
+
+wee-func()
+{
+    [[ $# -lt 1 ]] && echo "Need function args!" && return -1
+
+    local fname="$1"
+    local new="$2"
+
+    # If new is empty, this is delete request
+    if [[ -z "$new" ]]; then
+        [[ ! -f $SETUP ]] && return 0
+        sed -i "/^${fname}()/,/^}/d" "$SETUP"
+        sed -i "/^unset -f $fname$/d" "$CLEANUP"
+	reload="unset -f $fname;"
+	return 0
+    fi
+
+    # Handle create request
+    ensure_files
+    if grep -qE "^${fname}\\(\\)" "$SETUP" 2>/dev/null; then
+        read -rp "Function '$fname' already exists. Overwrite? (y/N): " confirm
+        case "$confirm" in
+            [yY][eE][sS]|[yY])
+                sed -i "/^${fname}()/,/^}/d" "$SETUP"
+                sed -i "/^unset -f $fname$/d" "$CLEANUP"
+                ;;
+            *) return 0 ;;
+        esac
+    fi
+    echo "Enter function body then Ctrl-D:"
+    local body_content=$(cat)
+    echo -e "${fname}()\n{\n$body_content\n}\n" >> "$SETUP"
+    echo "unset -f $fname" >> "$CLEANUP"
+    reload=" "
+
+    return 0
+}
+
+wee-show()
+{
+    [ ! -f "$MISE_TOML" ] && echo "No wee created for $PROJECT_DIR" && return 0
+
+    echo -e "\n--------- env: "
+    mise env | grep -v "export PATH"
+    echo -e "\n--------- aliases: "
+    [[ -f $SETUP ]] && grep '^alias ' "$SETUP"
+    echo -e "\n--------- functions: "
+    [[ -f $SETUP ]] && grep -E '^[a-zA-Z0-9_-]+\(\)' "$SETUP"
+    echo ""
+    return 0
+}
+
+! declare -F "wee-$1" >/dev/null && echo "Unknown option: $1" && usage -2
+
+cmd=$1
+shift
+
+reload=""
+"wee-$cmd" "$@" || usage $?
+
+[[ -n $reload ]] && echo -e "Do this to refresh env:\n$reload cd; cd -"
+
+exit 0
