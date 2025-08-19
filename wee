@@ -30,7 +30,7 @@ ensure_files()
     if [[ ! -f $MISE_TOML ]]; then
         read -rp "No .mise.toml found in $PROJECT_DIR. Create one here? (y|N): " confirm
         case "$confirm" in
-            [yY][eE][sS]|[yY]) cp "$HOME/.config/mise/template.toml" "$MISE_TOML" && mise trust || exit 0 ;;
+            [yY][eE][sS]|[yY]) cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" && mise trust || exit 0 ;;
             *) exit 0 ;;
         esac
     fi

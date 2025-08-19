@@ -77,7 +77,7 @@ Displays:
 When run inside a project directory, `wee` manages:
 
 - **`.mise.toml`**
-  Project-specific configuration used by `mise`. Created from template if missing.
+  Project-specific configuration used by `mise`. Created from wee-template.toml if missing.
 
 - **`.mise-setup.sh`**
   Sourced on entering project directory. Contains aliases and functions.

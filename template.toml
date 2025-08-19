@@ -1,0 +1,16 @@
+[env]
+# Environment variables get added here
+
+[hooks.enter]
+# Entry hook, to run commands, setup aliases and define functions
+shell = "bash"
+script = """
+source .mise-setup.sh
+"""
+
+[hooks.leave]
+# Leave hook, to clear environment, undefine aliases and functions
+shell = "bash"
+script = """
+source .mise-cleanup.sh
+"""
