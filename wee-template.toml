@@ -12,5 +12,5 @@ source .mise-setup.sh
 # Leave hook, to clear environment, undefine aliases and functions
 shell = "bash"
 script = """
-source .mise-cleanup.sh
+source ${OLDPWD}/.mise-cleanup.sh
 """
