@@ -48,6 +48,26 @@ $ wee alias gs "git status"
 $ wee alias ll # removes alias 'll'
 ```
 
+### Manage startup and cleanup commands
+```wee <start|clean> <a|d>```
+
+- `start` → Update startup script
+- `clean` → Update cleanup script
+- `a` → Add a command to startup or cleanup script
+- `d` → Remove a command from startup or cleanup script
+
+**Examples:**
+```
+$ wee start a
+Enter one-line bash command with args: echo "Current branch: $(git branch)"
+$ wee clean a
+Enter one-line bash command with args: echo "Checking for uncommited changes.. $(git status -uno)"
+$ wee start d
+1) echo "Current branch: $(git branch)" #cmd1
+2) echo "Grand changes happening in $PWD!" #cmd2
+Select a command by index to delete: 2
+```
+
 ### Manage Functions
 ```wee func <name> [-]```
 
@@ -90,7 +110,7 @@ When run inside a project directory, `wee` manages:
 After adding or updating aliases or functions, you may see this tip:
 ```
 Do this to refresh env:
-reload cd; cd -
+ cd; cd -
 ```
 Run it to apply changes immediately without restarting your shell.
 

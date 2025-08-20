@@ -9,6 +9,8 @@ wee is loaded on project directory entry and unloaded on project directory exit 
 
 Usage:
   $name env <var[=value]>     -> With value, add new variable or delete existing variable
+  $name start <a|d>           -> With a, given cmd is added to startup hook; with d, given cmd is removed from startup hook
+  $name clean <a|d>           -> With a, given cmd is added to cleanup hook; with d, given cmd is removed from cleanup hook
   $name alias <name> [cmd...] -> With cmd..., add new alias or delete existing alias
   $name func <name> [-]       -> With '-', add new function with user-specified body within command handler or delete existing
                                  NOTE: test function body before adding (debugging functions in wee may be time-consuming)
@@ -62,6 +64,58 @@ wee-env()
     ! mise set "$kv" && echo "Failed to set env: $kv"
 
     return 0
+}
+
+_wee_startup_cleanup_common()
+{
+    [[ $# -lt 1 ]] && echo "Need ${1}up cmd!" && return -1
+
+	local type=$1
+    local op=$2
+	local file
+	[[ "$type" == "start" ]] && file="$SETUP" || file="$CLEANUP"
+
+    ensure_files
+
+	mapfile -t options < <(grep '#cmd' "$file")
+	case "$op" in
+		a)
+			read -p "Enter one-line bash command with args: " cmd
+			local cmdID=$(grep '#cmd[0-9]\+' "$file" | grep -o '[0-9]\+' | sort -n | tail -n1)
+			((cmdID++))
+			echo "$cmd #cmd${cmdID}" >> "$file"
+			;;
+		d)
+			local choice
+			PS3="Select a command by index to delete: "
+			select choice in "${options[@]}"; do
+				[[ ! -n "$choice" ]] && echo "Invalid selection. Try again!" && continue
+				local cmdAndID=$(echo "$choice" | awk '{print $NF}')
+				sed -i "/$cmdAndID/d" "$file"
+				break
+			done
+			;;
+		*)
+			unset options
+			echo "Unknown option for wee $type: $op"
+			return -1
+			;;
+	esac
+    reload=" "
+
+    return 0
+}
+
+wee-start()
+{
+	_wee_startup_cleanup_common start "${@}"
+	return $?
+}
+
+wee-clean()
+{
+	_wee_startup_cleanup_common clean "${@}"
+	return $?
 }
 
 wee-alias()
