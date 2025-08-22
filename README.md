@@ -1,4 +1,4 @@
-# wee – Project Environment Helper
+# wee – Work Environment Enhancer
 
 `wee` is a lightweight Bash-based tool to **create and manage project-specific environments**.  
 It integrates with [mise](https://mise.jdx.dev/) to automatically load your environment when you **enter a project directory** and unload it when you **leave**.
