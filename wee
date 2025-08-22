@@ -2,80 +2,106 @@
 
 usage()
 {
-    local name="$(basename $0)"
-    cat <<EOF
+	local name="$(basename $0)"
+	cat <<EOF
 Helps create and manage project-specific environment with variables, aliases and shell functions.
 wee is loaded on project directory entry and unloaded on project directory exit (using mise utility)
 
 Usage:
-  $name env <var[=value]>     -> With value, add new variable or delete existing variable
-  $name start <a|d>           -> With a, given cmd is added to startup hook; with d, given cmd is removed from startup hook
-  $name clean <a|d>           -> With a, given cmd is added to cleanup hook; with d, given cmd is removed from cleanup hook
-  $name alias <name> [cmd...] -> With cmd..., add new alias or delete existing alias
-  $name func <name> [-]       -> With '-', add new function with user-specified body within command handler or delete existing
-                                 NOTE: test function body before adding (debugging functions in wee may be time-consuming)
-  $name show                  -> show env variables, aliases and function names defined for this project
+  $name show                   -> show env, bash-it aliases/plugins(if bash-it installed), normal aliases and function names defined for this project
+  $name env <var[=value]>      -> With value, add new variable; Without value, delete existing variable
+  $name start <a|d>            -> With 'a', given cmd is added to startup hook; with 'd', given cmd is removed from startup hook
+  $name clean <a|d>            -> With 'a', given cmd is added to cleanup hook; with 'd', given cmd is removed from cleanup hook
+  $name bashit <a|d> <t> <n>   -> With 'a', create auto-(startup-enable & cleanup-disable) for given bash-it alias/plugin
+								  With 'd', remove auto-(startup-enable & cleanup-disable) for given bash-it alias/plugin
+								  <t> is type: either 'alias' or 'plugin'
+								  <n> is name of specific alias or plugin of bash-it
+  $name alias <name> [cmd...]  -> With cmd..., add new alias; Without cmd... delete existing alias
+  $name func <name> [-]        -> With '-', add new function with user-specified body within command handler
+								  NOTE: test function body before adding (debugging functions in wee may be time-consuming)
+								  Without '-', deletes a function with given name
 
 EOF
-    exit $1
+	exit $1
 }
 
 [[ $# -lt 1 ]] && usage 0
 
 PROJECT_DIR="$(pwd)"
 MISE_TOML="$PROJECT_DIR/.mise.toml"
-SETUP="$PROJECT_DIR/.mise-setup.sh"
-CLEANUP="$PROJECT_DIR/.mise-cleanup.sh"
+SETUP="$PROJECT_DIR/.misein.sh"
+CLEANUP="$PROJECT_DIR/.miseout.sh"
 
 ensure_files()
 {
-    if [[ ! -f $MISE_TOML ]]; then
-        read -rp "No .mise.toml found in $PROJECT_DIR. Create one here? (y|N): " confirm
-        case "$confirm" in
-            [yY][eE][sS]|[yY]) cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" && mise trust || exit 0 ;;
-            *) exit 0 ;;
-        esac
-    fi
-    [[ -f $SETUP ]] || echo '# Project setup' > "$SETUP"
-    [[ -f $CLEANUP ]] || echo '# Project cleanup' > "$CLEANUP"
-    return 0
+	if [[ ! -f $MISE_TOML ]]; then
+		read -rp "No .mise.toml found in $PROJECT_DIR. Create one here? (y|N): " confirm
+		case "$confirm" in
+			[yY][eE][sS]|[yY]) cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" && mise trust || exit 0 ;;
+			*) exit 0 ;;
+		esac
+	fi
+	[[ -f $SETUP ]] || echo '# Project setup' > "$SETUP"
+	[[ -f $CLEANUP ]] || echo '# Project cleanup' > "$CLEANUP"
+	return 0
+}
+
+wee-show()
+{
+	[ ! -f "$MISE_TOML" ] && echo "wee is not setup for $PROJECT_DIR" && return 0
+
+	local data=$(mise env | grep -v "export PATH")
+	[ -n "$data" ] && echo -e "\n--------- env:\n$data"
+
+	if [[ -f $SETUP ]]; then
+		local data=$(grep '^alias ' "$SETUP")
+		[ -n "$data" ] && echo -e "\n--------- aliases:\n$data"
+		local data=$(grep -E '^[a-zA-Z0-9_-]+\(\)' "$SETUP")
+		[ -n "$data" ] && echo -e "\n--------- functions:\n$data"
+		local data=$(grep "^source \$BASH_IT" "$SETUP" | awk '{print $2}' | xargs -n1 basename | cut -d. -f1)
+		[ -n "$data" ] && echo -e "\n--------- bashit:\n$data"
+	fi
+
+	echo ""
+	return 0
 }
 
 wee-env()
 {
-    [[ -z "$1" ]] && echo "Need env argument(s)!" && return -1
+	[[ -z "$1" ]] && echo "Need env argument(s)!" && return -1
 
-    local kv="${@}"
-    local var="${kv%%=*}"
+	set -x
+	local kv="${@}"
+	[[ $kv = *"="* ]] && local var="${kv#*=}" || local var=""
 
-    # If var is empty, this is delete request $1 is 'key' with no '=value'
-    [[ -z $var ]] && mise unset "$1" && return 0
+	# If var is empty, this is delete request $1 is 'key' with no '=value'
+	[[ -z $var ]] && mise unset "$1" && return 0
+	set +x
+	# This is creation request
+	ensure_files
+	local existing=$(mise env | grep "^export $var=")
+	if [[ -n $existing ]]; then
+		read -rp "'$var' already defined {$existing}. Overwrite? (y/N): " confirm
+		case "$confirm" in
+			[yY][eE][sS]|[yY]) ;;
+			*) echo "aborted" ; return 0 ;;
+		esac
+	fi
+	! mise set "$kv" && echo "Failed to set env: $kv"
 
-    # This is creation request
-    ensure_files
-    local existing=$(mise env | grep "^export $var=")
-    if [[ -n $existing ]]; then
-        read -rp "'$var' already defined {$existing}. Overwrite? (y/N): " confirm
-        case "$confirm" in
-            [yY][eE][sS]|[yY]) ;;
-            *) echo "aborted" ; return 0 ;;
-        esac
-    fi
-    ! mise set "$kv" && echo "Failed to set env: $kv"
-
-    return 0
+	return 0
 }
 
 _wee_startup_cleanup_common()
 {
-    [[ $# -lt 1 ]] && echo "Need ${1}up cmd!" && return -1
+	[[ $# -lt 1 ]] && echo "Need ${1}up cmd!" && return -1
 
 	local type=$1
-    local op=$2
+	local op=$2
 	local file
 	[[ "$type" == "start" ]] && file="$SETUP" || file="$CLEANUP"
 
-    ensure_files
+	ensure_files
 
 	mapfile -t options < <(grep '#cmd' "$file")
 	case "$op" in
@@ -86,12 +112,12 @@ _wee_startup_cleanup_common()
 			echo "$cmd #cmd${cmdID}" >> "$file"
 			;;
 		d)
-			local choice
+			local cmd 
 			PS3="Select a command by index to delete: "
-			select choice in "${options[@]}"; do
-				[[ ! -n "$choice" ]] && echo "Invalid selection. Try again!" && continue
-				local cmdAndID=$(echo "$choice" | awk '{print $NF}')
-				sed -i "/$cmdAndID/d" "$file"
+			select cmd in "${options[@]}"; do
+				[[ -z "$cmd" ]] && echo "Invalid selection. Try again!" && continue
+				local cmdID=$(echo "$cmd" | awk '{print $NF}')
+				sed -i "/$cmdID/d" "$file"
 				break
 			done
 			;;
@@ -101,9 +127,9 @@ _wee_startup_cleanup_common()
 			return -1
 			;;
 	esac
-    reload=" "
+	reload=" "
 
-    return 0
+	return 0
 }
 
 wee-start()
@@ -118,89 +144,109 @@ wee-clean()
 	return $?
 }
 
+wee-bashit()
+{
+	[ -z "$BASH_IT" ] && echo "bash-it not installed.. Exiting" && return 0
+	[[ $# -ne 3 ]] && echo "Need bashit argument(s)!" && return -1
+	case $2 in
+		alias) subdir=aliases; ext=aliases ;;
+		plugin) subdir=plugins; ext=plugin ;;
+		*) echo "Invalid bashit type: $2" && return -3 ;;
+	esac
+	. $BASH_IT/bash_it.sh; (! bash-it show alias | grep -q "^$3 " ) && echo "Invalid bashit $2: $3" && return 0
+
+	ensure_files
+	case "$1" in
+		a)
+			echo "source \$BASH_IT/$subdir/available/$3.$ext.bash" >> "$SETUP"
+			local cmd="$(grep '^alias ' "$BASH_IT/$subdir/available/$3.$ext.bash" | awk '{print $2}' | cut -d= -f1 | tr '\n' ' ')"
+			mkdir -p $BASH_IT/$subdir/undefiner
+			echo "unalias $cmd 2>/dev/null" > $BASH_IT/$subdir/undefiner/$3.$ext.bash
+			echo "source \$BASH_IT/$subdir/undefiner/$3.$ext.bash" >> "$CLEANUP"
+			reload=" "
+			;;
+		d)
+			sed -i "/^source .*$3.$ext.bash/d" "$SETUP"
+			sed -i "/^source .*$3.$ext.bash/d" "$CLEANUP"
+			reload=" source $BASH_IT/$subdir/undefiner/$3.$ext.bash;"
+			;;
+		*)
+			echo "Invalid bashit op: $1" && return -2
+			;;
+	esac
+
+	return 0
+}
+
 wee-alias()
 {
-    [[ $# -lt 1 ]] && echo "Need alias argument(s)!" && return -1
+	[[ $# -lt 1 ]] && echo "Need alias argument(s)!" && return -1
 
-    local name="$1"; shift
-    local cmd="$*"
+	local name="$1"; shift
+	local cmd="$*"
 
-    # If cmd is empty, this is delete request
-    if [[ -z $cmd ]]; then
-        [[ ! -f $SETUP ]] && return 0
-        sed -i "/^alias $name=/d" "$SETUP"
-        sed -i "/^unalias $name /d" "$CLEANUP"
-        reload=" "
-        return 0
-    fi
+	# If cmd is empty, this is delete request
+	if [[ -z $cmd ]]; then
+		[[ ! -f $SETUP ]] && return 0
+		sed -i "/^alias $name=/d" "$SETUP"
+		sed -i "/^unalias $name /d" "$CLEANUP"
+		reload=" unalias $name;"
+		return 0
+	fi
 
-    # Handle create request
-    ensure_files
-    if grep -qE "^alias $name=" "$SETUP" 2>/dev/null; then
-        read -rp "Alias '$name' already exists. Overwrite? (y/N): " confirm
-        case "$confirm" in
-            [yY][eE][sS]|[yY])
-                sed -i "/^alias $name=/d" "$SETUP"
-                sed -i "/^unalias $name /d" "$SETUP" "$CLEANUP" ;;
-            *) return 0 ;;
-        esac
-    fi
-    echo "alias $name='$cmd'" >> "$SETUP"
-    echo "unalias $name 2>/dev/null" >> "$CLEANUP"
-    reload=" "
+	# Handle create request
+	ensure_files
+	if grep -qE "^alias $name=" "$SETUP" 2>/dev/null; then
+		read -rp "Alias '$name' already exists. Overwrite? (y/N): " confirm
+		case "$confirm" in
+			[yY][eE][sS]|[yY])
+				sed -i "/^alias $name=/d" "$SETUP"
+				sed -i "/^unalias $name /d" "$SETUP" "$CLEANUP" ;;
+			*) return 0 ;;
+		esac
+	fi
+	echo "alias $name='$cmd'" >> "$SETUP"
+	echo "unalias $name 2>/dev/null" >> "$CLEANUP"
+	reload=" "
 
-    return 0
+	return 0
 }
 
 wee-func()
 {
-    [[ $# -lt 1 ]] && echo "Need function args!" && return -1
+	[[ $# -lt 1 ]] && echo "Need function args!" && return -1
 
-    local fname="$1"
-    local new="$2"
+	local fname="$1"
+	local new="$2"
 
-    # If new is empty, this is delete request
-    if [[ -z "$new" ]]; then
-        [[ ! -f $SETUP ]] && return 0
-        sed -i "/^${fname}()/,/^}/d" "$SETUP"
-        sed -i "/^unset -f $fname$/d" "$CLEANUP"
-	reload="unset -f $fname;"
+	# If new is empty, this is delete request
+	if [[ -z "$new" ]]; then
+		[[ ! -f $SETUP ]] && return 0
+		sed -i "/^${fname}()/,/^}/d" "$SETUP"
+		sed -i "/^unset -f $fname$/d" "$CLEANUP"
+		reload=" unset -f $fname;"
+		return 0
+	fi
+
+	# Handle create request
+	ensure_files
+	if grep -qE "^${fname}\\(\\)" "$SETUP" 2>/dev/null; then
+		read -rp "Function '$fname' already exists. Overwrite? (y/N): " confirm
+		case "$confirm" in
+			[yY][eE][sS]|[yY])
+				sed -i "/^${fname}()/,/^}/d" "$SETUP"
+				sed -i "/^unset -f $fname$/d" "$CLEANUP"
+				;;
+			*) return 0 ;;
+		esac
+	fi
+	echo "Enter function body then Ctrl-D:"
+	local body_content=$(cat)
+	echo -e "${fname}()\n{\n$body_content\n}\n" >> "$SETUP"
+	echo "unset -f $fname" >> "$CLEANUP"
+	reload=" "
+
 	return 0
-    fi
-
-    # Handle create request
-    ensure_files
-    if grep -qE "^${fname}\\(\\)" "$SETUP" 2>/dev/null; then
-        read -rp "Function '$fname' already exists. Overwrite? (y/N): " confirm
-        case "$confirm" in
-            [yY][eE][sS]|[yY])
-                sed -i "/^${fname}()/,/^}/d" "$SETUP"
-                sed -i "/^unset -f $fname$/d" "$CLEANUP"
-                ;;
-            *) return 0 ;;
-        esac
-    fi
-    echo "Enter function body then Ctrl-D:"
-    local body_content=$(cat)
-    echo -e "${fname}()\n{\n$body_content\n}\n" >> "$SETUP"
-    echo "unset -f $fname" >> "$CLEANUP"
-    reload=" "
-
-    return 0
-}
-
-wee-show()
-{
-    [ ! -f "$MISE_TOML" ] && echo "No wee created for $PROJECT_DIR" && return 0
-
-    echo -e "\n--------- env: "
-    mise env | grep -v "export PATH"
-    echo -e "\n--------- aliases: "
-    [[ -f $SETUP ]] && grep '^alias ' "$SETUP"
-    echo -e "\n--------- functions: "
-    [[ -f $SETUP ]] && grep -E '^[a-zA-Z0-9_-]+\(\)' "$SETUP"
-    echo ""
-    return 0
 }
 
 ! declare -F "wee-$1" >/dev/null && echo "Unknown option: $1" && usage -2
@@ -210,7 +256,6 @@ shift
 
 reload=""
 "wee-$cmd" "$@" || usage $?
-
-[[ -n $reload ]] && echo -e "Do this to refresh env:\n$reload cd; cd -"
+[[ -n $reload ]] && echo -e "Do this to refresh environment immediately:\n$reload cd; cd -"
 
 exit 0

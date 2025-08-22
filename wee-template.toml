@@ -5,12 +5,12 @@
 # Entry hook, to run commands, setup aliases and define functions
 shell = "bash"
 script = """
-source .mise-setup.sh
+source .misein.sh
 """
 
 [hooks.leave]
 # Leave hook, to clear environment, undefine aliases and functions
 shell = "bash"
 script = """
-source ${OLDPWD}/.mise-cleanup.sh
+source ${OLDPWD}/.miseout.sh
 """
