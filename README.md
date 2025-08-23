@@ -84,11 +84,28 @@ Enter function body:
 $ wee func greet # removes function 'greet'
 ```
 
+### Manage bash-it aliases and plugins
+```wee bashit <a|d> <alias|plugin> <name>```
+
+- `alias` → bash-it alias control
+- `plugin` → bash-it plugin control
+- `a` → Add alias/plugin enable and disable controls to startup and cleanup scripts respectively
+- `d` → Remove alias/plugin enable and disable controls from startup and cleanup scripts respectively
+
+**Examples:**
+```
+$ wee bashit a alias git
+$ wee bashit d alias git
+$ wee bashit a plugin git
+$ wee bashit d plugin git
+```
+
 ### Show Current Environment
 ```wee show```
 
-Displays:
+Displays following for current project setup with wee:
 - Environment variables
+- Bashit aliases/plugins
 - Aliases
 - Functions
 
@@ -107,10 +124,10 @@ When run inside a project directory, `wee` manages:
 
 ## 🔄 Refreshing Environment
 
-After adding or updating aliases or functions, you may see this tip:
+After adding or updating aliases or functions, you may tips similar to below:
 ```
-Do this to refresh env:
- cd; cd -
+Do this to refresh environment immediately:
+ unalias llh; cd; cd -
 ```
-Run it to apply changes immediately without restarting your shell.
+Run such commands to apply changes immediately without restarting your shell.
 

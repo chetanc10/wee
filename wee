@@ -58,8 +58,8 @@ wee-show()
 		[ -n "$data" ] && echo -e "\n--------- aliases:\n$data"
 		local data=$(grep -E '^[a-zA-Z0-9_-]+\(\)' "$SETUP")
 		[ -n "$data" ] && echo -e "\n--------- functions:\n$data"
-		local data=$(grep "^source \$BASH_IT" "$SETUP" | awk '{print $2}' | xargs -n1 basename | cut -d. -f1)
-		[ -n "$data" ] && echo -e "\n--------- bashit:\n$data"
+		local data=$(grep "^source \$BASH_IT" "$SETUP" | awk '{print $2}')
+		[ -n "$data" ] && echo -e "\n--------- bashit:\n$(echo $data | xargs -n1 basename | cut -d. -f1)"
 	fi
 
 	echo ""
@@ -159,9 +159,15 @@ wee-bashit()
 	case "$1" in
 		a)
 			echo "source \$BASH_IT/$subdir/available/$3.$ext.bash" >> "$SETUP"
-			local cmd="$(grep '^alias ' "$BASH_IT/$subdir/available/$3.$ext.bash" | awk '{print $2}' | cut -d= -f1 | tr '\n' ' ')"
 			mkdir -p $BASH_IT/$subdir/undefiner
-			echo "unalias $cmd 2>/dev/null" > $BASH_IT/$subdir/undefiner/$3.$ext.bash
+			local mainfile="$BASH_IT/$subdir/available/$3.$ext.bash"
+			if [ "$2" == "alias" ]; then
+				local cmd="$(grep '^alias ' "$mainfile" | awk '{print $2}' | cut -d= -f1 | tr '\n' ' ')"
+				echo "unalias $cmd 2>/dev/null" > $BASH_IT/$subdir/undefiner/$3.$ext.bash
+			else
+				local cmd="$(grep '^function ' "$mainfile" | awk '{print $2}' | sed 's/[({].*//' | tr '\n' ' ')"
+				echo "unset -f $cmd 2>/dev/null" > $BASH_IT/$subdir/undefiner/$3.$ext.bash
+			fi
 			echo "source \$BASH_IT/$subdir/undefiner/$3.$ext.bash" >> "$CLEANUP"
 			reload=" "
 			;;
