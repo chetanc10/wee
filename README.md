@@ -21,6 +21,11 @@ mise is automatically setup when installed with basherbee
 
 ```wee <command> [args...]```
 
+### New project wee setup
+```wee new```  
+This creates wee/mise configuration to setup and manage project environment. This is the first command to kickstart wee operations in a new project directory.
+
+
 ### Manage Environment Variables
 ```wee env <VAR[=value]>```
 

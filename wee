@@ -4,10 +4,10 @@ usage()
 {
 	local name="$(basename $0)"
 	cat <<EOF
-Helps create and manage project-specific environment with variables, aliases and shell functions.
-wee is loaded on project directory entry and unloaded on project directory exit (using mise utility)
+wee - creates and manages project environment with variables, aliases and shell functions.
 
 Usage:
+  $name new                    -> Creates a wee environment management tracker setup in current project
   $name show                   -> show env, bash-it aliases/plugins(if bash-it installed), normal aliases and function names defined for this project
   $name env <var[=value]>      -> With value, add new variable; Without value, delete existing variable
   $name start <a|d>            -> With 'a', given cmd is added to startup hook; with 'd', given cmd is removed from startup hook
@@ -32,17 +32,29 @@ MISE_TOML="$PROJECT_DIR/.mise.toml"
 SETUP="$PROJECT_DIR/.misein.sh"
 CLEANUP="$PROJECT_DIR/.miseout.sh"
 
-ensure_files()
+wee-new()
 {
-	if [[ ! -f $MISE_TOML ]]; then
-		read -rp "No .mise.toml found in $PROJECT_DIR. Create one here? (y|N): " confirm
-		case "$confirm" in
-			[yY][eE][sS]|[yY]) cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" && mise trust || exit 0 ;;
-			*) exit 0 ;;
-		esac
+	[[ -f $MISE_TOML ]] && return 0
+
+	echo "Creating $MISE_TOML"
+	cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" && mise trust || exit 0
+	echo '# Project setup' > "$SETUP"
+	echo '# Project cleanup' > "$CLEANUP"
+
+	[ -z "$BASH_IT" ] && return 0
+	read -rp "Shall wee auto-enable bash-it git aliases/plugin (recommended) for $PROJECT_DIR? (y|n): " ok
+	if [ "$ok" == "y" ]; then
+		echo "source \$BASH_IT/aliases/available/git.aliases.bash" >> "$SETUP"
+		echo "source \$BASH_IT/plugins/available/git.plugin.bash" >> "$SETUP"
+		local cmd="$(grep '^alias ' "$BASH_IT/aliases/available/git.aliases.bash" | awk '{print $2}' | cut -d= -f1 | tr '\n' ' ')"
+		echo "unalias $cmd 2>/dev/null" > $BASH_IT/aliases/undefiner/git.aliases.bash
+		cmd="$(grep '^function ' "$BASH_IT/plugins/available/git.plugin.bash" | awk '{print $2}' | sed 's/[({].*//' | tr '\n' ' ')"
+		echo "unset -f $cmd 2>/dev/null" > $BASH_IT/plugins/undefiner/git.plugin.bash
+		echo "source \$BASH_IT/aliases/undefiner/git.aliases.bash" >> "$CLEANUP"
+		echo "source \$BASH_IT/plugins/undefiner/git.plugin.bash" >> "$CLEANUP"
+		echo "wee bashit command can be used to disable git aliases and plugin later.."
 	fi
-	[[ -f $SETUP ]] || echo '# Project setup' > "$SETUP"
-	[[ -f $CLEANUP ]] || echo '# Project cleanup' > "$CLEANUP"
+
 	return 0
 }
 
@@ -59,7 +71,7 @@ wee-show()
 		local data=$(grep -E '^[a-zA-Z0-9_-]+\(\)' "$SETUP")
 		[ -n "$data" ] && echo -e "\n--------- functions:\n$data"
 		local data=$(grep "^source \$BASH_IT" "$SETUP" | awk '{print $2}')
-		[ -n "$data" ] && echo -e "\n--------- bashit:\n$(echo $data | xargs -n1 basename | cut -d. -f1)"
+		[ -n "$data" ] && echo -e "\n--------- bashit:\n$(echo $data | xargs -n1 basename | cut -d. -f1,2)"
 	fi
 
 	echo ""
@@ -78,7 +90,6 @@ wee-env()
 	[[ -z $var ]] && mise unset "$1" && return 0
 	set +x
 	# This is creation request
-	ensure_files
 	local existing=$(mise env | grep "^export $var=")
 	if [[ -n $existing ]]; then
 		read -rp "'$var' already defined {$existing}. Overwrite? (y/N): " confirm
@@ -100,8 +111,6 @@ _wee_startup_cleanup_common()
 	local op=$2
 	local file
 	[[ "$type" == "start" ]] && file="$SETUP" || file="$CLEANUP"
-
-	ensure_files
 
 	mapfile -t options < <(grep '#cmd' "$file")
 	case "$op" in
@@ -155,7 +164,6 @@ wee-bashit()
 	esac
 	. $BASH_IT/bash_it.sh; (! bash-it show alias | grep -q "^$3 " ) && echo "Invalid bashit $2: $3" && return 0
 
-	ensure_files
 	case "$1" in
 		a)
 			echo "source \$BASH_IT/$subdir/available/$3.$ext.bash" >> "$SETUP"
@@ -201,7 +209,6 @@ wee-alias()
 	fi
 
 	# Handle create request
-	ensure_files
 	if grep -qE "^alias $name=" "$SETUP" 2>/dev/null; then
 		read -rp "Alias '$name' already exists. Overwrite? (y/N): " confirm
 		case "$confirm" in
@@ -235,7 +242,6 @@ wee-func()
 	fi
 
 	# Handle create request
-	ensure_files
 	if grep -qE "^${fname}\\(\\)" "$SETUP" 2>/dev/null; then
 		read -rp "Function '$fname' already exists. Overwrite? (y/N): " confirm
 		case "$confirm" in
@@ -248,7 +254,7 @@ wee-func()
 	fi
 	echo "Enter function body then Ctrl-D:"
 	local body_content=$(cat)
-	echo -e "${fname}()\n{\n$body_content\n}\n" >> "$SETUP"
+	echo -e "${fname}()\n{\n$body_content\n}" >> "$SETUP"
 	echo "unset -f $fname" >> "$CLEANUP"
 	reload=" "
 
@@ -259,6 +265,11 @@ wee-func()
 
 cmd=$1
 shift
+
+if [ "$cmd" != "new" ] && [ ! -f "$MISE_TOML" ]; then
+	echo -e "Create wee configuration first with:\nwee new"
+	return 0
+fi
 
 reload=""
 "wee-$cmd" "$@" || usage $?
