@@ -41,6 +41,7 @@ wee-create()
 	[ -z "$BASH_IT" ] && return 0
 	read -rp "Shall wee auto-enable bash-it git aliases/plugin (recommended) for $PROJECT_DIR? (y|n): " ok
 	if [ "$ok" == "y" ]; then
+		mkdir -p $BASH_IT/aliases/undefiner $BASH_IT/plugins/undefiner/
 		echo "source $BASH_IT/aliases/available/git.aliases.bash 2>/dev/null" >> "$SETUP"
 		echo "source $BASH_IT/plugins/available/git.plugin.bash 2>/dev/null" >> "$SETUP"
 		local cmd="$(grep '^alias ' "$BASH_IT/aliases/available/git.aliases.bash" | awk '{print $2}' | cut -d= -f1 | tr '\n' ' ')"
