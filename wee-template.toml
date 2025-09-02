@@ -12,5 +12,5 @@ source .misein.sh
 # Leave hook, to clear environment, undefine aliases and functions
 shell = "bash"
 script = """
-source ${OLDPWD}/.miseout.sh
+source .miseout.sh
 """

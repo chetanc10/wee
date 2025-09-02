@@ -34,7 +34,9 @@ wee-create()
 	[[ -f $MISE_TOML ]] && return 0
 
 	echo "Creating $MISE_TOML"
-	cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" && mise trust || exit 0
+	cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" || exit 0
+	sed -i "s|.misein.sh|${PROJECT_DIR}/.misein.sh|" "$MISE_TOML"
+	sed -i "s|.miseout.sh|${PROJECT_DIR}/.miseout.sh|" "$MISE_TOML"
 	echo '# Project setup' > "$SETUP"
 	echo '# Project cleanup' > "$CLEANUP"
 
