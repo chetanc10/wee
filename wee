@@ -28,6 +28,7 @@ PROJECT_DIR="$(pwd)"
 MISE_TOML="$PROJECT_DIR/.mise.toml"
 SETUP="$PROJECT_DIR/.misein.sh"
 CLEANUP="$PROJECT_DIR/.miseout.sh"
+BASH_IT="${HOME}/.bash-it"
 
 wee-create()
 {
@@ -40,7 +41,6 @@ wee-create()
 	echo '# Project setup' > "$SETUP"
 	echo '# Project cleanup' > "$CLEANUP"
 
-	[ -z "$BASH_IT" ] && return 0
 	read -rp "Shall wee auto-enable bash-it git aliases/plugin (recommended) for $PROJECT_DIR? (y|n): " ok
 	if [ "$ok" == "y" ]; then
 		mkdir -p $BASH_IT/aliases/undefiner $BASH_IT/plugins/undefiner/
@@ -164,7 +164,6 @@ wee-clean()
 
 wee-bashit()
 {
-	[ -z "$BASH_IT" ] && echo "bash-it not installed.. Exiting" && return 0
 	[[ $# -ne 3 ]] && echo "Need bashit alias/plugin setup arguments!" && return -1
 	case $1 in
 		alias) subdir=aliases; ext=aliases ;;
