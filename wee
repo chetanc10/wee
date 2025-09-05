@@ -41,7 +41,7 @@ wee-create()
 	echo '# Project setup' > "$SETUP"
 	echo '# Project cleanup' > "$CLEANUP"
 
-	read -rp "Shall wee auto-enable bash-it git aliases/plugin (recommended) for $PROJECT_DIR? (y|n): " ok
+	read -p "Shall wee auto-enable bash-it git aliases/plugin (recommended) for $PROJECT_DIR? (y|n): " -n1 ok
 	if [ "$ok" == "y" ]; then
 		mkdir -p $BASH_IT/aliases/undefiner $BASH_IT/plugins/undefiner/
 		echo "source $BASH_IT/aliases/available/git.aliases.bash 2>/dev/null" >> "$SETUP"
@@ -54,6 +54,8 @@ wee-create()
 		echo "source $BASH_IT/plugins/undefiner/git.plugin.bash 2>/dev/null" >> "$CLEANUP"
 		echo "wee bashit command can be used to disable git aliases and plugin later.."
 	fi
+
+	mise trust
 
 	return 0
 }
