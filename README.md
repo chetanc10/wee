@@ -69,11 +69,11 @@ $ wee env del PORT # removes PORT
 
 **Examples:**
 ```
-$ wee start add echo "Current branch: $(git branch)"
+$ wee start add echo "git status -sb"
 $ wee start add echo "Grand changes happening in $PWD!"
 $ wee start del
-1) echo "Current branch: $(git branch)" #cmd1
-2) echo "Grand changes happening in $PWD!" #cmd2
+1) echo "git status -sb" #cmd1
+2) echo "Grand changes happening in ~/proj/curr-dir!" #cmd2
 Select a command by index to delete: 2
 ```
 
@@ -113,12 +113,12 @@ $ wee alias del ll
 
 **Examples:**
 ```
-$ wee func add greet
+$ wee func add gcfg
 
 Enter function body:
-  echo "Hello, $USER"
+  git config -l
 
-$ wee func del greet # removes function 'greet'
+$ wee func del gcfg # removes function 'gcfg'
 ```
 
 ## 📂 Project Files
