@@ -69,10 +69,10 @@ $ wee env del PORT # removes PORT
 
 **Examples:**
 ```
-$ wee start add echo "git status -sb"
+$ wee start add echo "git ls-files --others --exclude-standard"
 $ wee start add echo "Grand changes happening in $PWD!"
 $ wee start del
-1) echo "git status -sb" #cmd1
+1) echo "git ls-files --others --exclude-standard" #cmd1
 2) echo "Grand changes happening in ~/proj/curr-dir!" #cmd2
 Select a command by index to delete: 2
 ```

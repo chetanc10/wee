@@ -6,7 +6,7 @@ usage()
 	cat <<EOF
 wee - creates and manages project environment.
 Usage:
-  $name create                         -> Creates a wee environment management setup for current project
+  $name create [y]                     -> Creates wee environment setup for current project; 'y' enables basic helpers by default
   $name destroy                        -> Destroy existing wee environment management setup from current project
   $name show                           -> show env, bash-it aliases/plugins(if bash-it installed), normal aliases and function names defined for this project
   $name env <add|del> <var> [value]    -> Add or delete an environment variable
@@ -34,26 +34,38 @@ wee-create()
 {
 	[[ -f $MISE_TOML ]] && return 0
 
-	echo "Creating $MISE_TOML"
 	cp "$HOME/.config/mise/wee-template.toml" "$MISE_TOML" || exit 0
 	sed -i "s|.misein.sh|${PROJECT_DIR}/.misein.sh|" "$MISE_TOML"
 	sed -i "s|.miseout.sh|${PROJECT_DIR}/.miseout.sh|" "$MISE_TOML"
 	echo '# Project setup' > "$SETUP"
 	echo '# Project cleanup' > "$CLEANUP"
 
-	read -p "Shall wee auto-enable bash-it git aliases/plugin (recommended) for $PROJECT_DIR? (y|n): " -n1 ok
-	[ "$ok" != "y" ] && return 0
+	[ ! -d ".git" ] && return 0
+
+	if [ -z "$1" ]; then
+		echo "For wee creation on a git project:"
+		echo "- adds bash-it control commands for 'git' alias and plugin"
+		echo "- sets up a greeting banner showing git branch and locally modified git-tracked files"
+		local ok
+		read -p "Shall wee enable these $PROJECT_DIR? (y|n): " -n1 ok; echo ""
+		[ "$ok" != "y" ] && return 0
+	elif [ "$1" != "y" ]; then
+		echo "Invalid argument for wee create!" && return -1
+	fi
 
 	mkdir -p $BASH_IT/aliases/undefiner $BASH_IT/plugins/undefiner/
 	echo "source $BASH_IT/aliases/available/git.aliases.bash 2>/dev/null" >> "$SETUP"
 	echo "source $BASH_IT/plugins/available/git.plugin.bash 2>/dev/null" >> "$SETUP"
+	echo "git status -sb" >> "$SETUP"
 	local cmd="$(grep '^alias ' "$BASH_IT/aliases/available/git.aliases.bash" | awk '{print $2}' | cut -d= -f1 | tr '\n' ' ')"
 	echo "unalias $cmd 2>/dev/null" > $BASH_IT/aliases/undefiner/git.aliases.bash
 	cmd="$(grep '^function ' "$BASH_IT/plugins/available/git.plugin.bash" | awk '{print $2}' | sed 's/[({].*//' | tr '\n' ' ')"
 	echo "unset -f $cmd 2>/dev/null" > $BASH_IT/plugins/undefiner/git.plugin.bash
 	echo "source $BASH_IT/aliases/undefiner/git.aliases.bash 2>/dev/null" >> "$CLEANUP"
 	echo "source $BASH_IT/plugins/undefiner/git.plugin.bash 2>/dev/null" >> "$CLEANUP"
-	mise trust
+	mise trust 2>/dev/null
+
+	echo "Created wee configuration"
 
 	return 0
 }
@@ -66,6 +78,7 @@ wee-destroy()
 
 wee-show()
 {
+	reload=false
 	[ ! -f "$MISE_TOML" ] && echo "wee is not setup for $PROJECT_DIR" && return 0
 
 	local data=$(mise env | grep -v "export PATH")
@@ -90,6 +103,7 @@ wee-show()
 
 wee-env()
 {
+	reload=false
 	[[ $# -lt 2 ]] && echo "Need environment variable setup arguments!" && return -1
 
 	case $1 in
@@ -145,7 +159,6 @@ _wee_startup_cleanup_common()
 			return -3
 			;;
 	esac
-	reload=true
 
 	return 0
 }
@@ -185,13 +198,11 @@ wee-bashit()
 				echo "unset -f $cmd 2>/dev/null" > $BASH_IT/$subdir/undefiner/$3.$ext.bash
 			fi
 			echo "source $BASH_IT/$subdir/undefiner/$3.$ext.bash 2>/dev/null" >> "$CLEANUP"
-			reload=true
 			;;
 		del)
 			sed -i "/^source .*$3.$ext.bash/d" "$SETUP"
 			sed -i "/^source .*$3.$ext.bash/d" "$CLEANUP"
 			echo "source $BASH_IT/$subdir/undefiner/$3.$ext.bash 2>/dev/null" > /tmp/rewee-cmd
-			reload=true
 			;;
 		*)
 			echo "Expected argument: 'add' or 'del'. Given: $2"
@@ -212,13 +223,11 @@ wee-alias()
 			grep -E "^alias $name=" "$SETUP" 2>/dev/null && echo "alias $name already defined!" && return 0
 			echo "alias $name='$cmd'" >> "$SETUP"
 			echo "unalias $name 2>/dev/null" >> "$CLEANUP"
-			reload=true
 			;;
 		del)
 			sed -i "/^alias $2=/d" "$SETUP"
 			sed -i "/^unalias $2/d" "$CLEANUP"
 			echo "unalias $2" > /tmp/rewee-cmd
-			reload=true
 			;;
 		*)
 			echo "Expected argument: 'add' or 'del'. Given: $1"
@@ -240,13 +249,11 @@ wee-func()
 			local body_content=$(cat)
 			echo -e "$2()\n{\n$body_content\n}" >> "$SETUP"
 			echo "unset -f $2" >> "$CLEANUP"
-			reload=true
 			;;
 		del)
 			sed -i "/^$2()/,/^}/d" "$SETUP"
 			sed -i "/^unset -f $2$/d" "$CLEANUP"
 			echo "unset -f $2" > /tmp/rewee-cmd
-			reload=true
 			;;
 		*)
 			echo "Expected argument: 'add' or 'del'. Given: $1"
@@ -264,7 +271,7 @@ if [ "$1" != "create" ] && [ ! -f "$MISE_TOML" ]; then
 	exit 0
 fi
 
-reload=false
+reload=true
 cmd=$1; shift
 "wee-$cmd" "$@" || usage $?
 $reload && echo -e "Run 'rewee' to reload environment immediately"
