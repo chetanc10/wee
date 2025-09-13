@@ -77,22 +77,6 @@ $ wee start del
 Select a command by index to delete: 2
 ```
 
-### Manage bash-it aliases and plugins
-```wee bashit <alias|plugin> <add|del> <name>```
-
-- `alias` → bash-it alias control
-- `plugin` → bash-it plugin control
-- `add` → Add alias/plugin enable and disable controls to startup and cleanup scripts respectively
-- `del` → Remove alias/plugin enable and disable controls from startup and cleanup scripts respectively
-
-**Examples:**
-```
-$ wee bashit alias add git
-$ wee bashit alias del git
-$ wee bashit plugin add git
-$ wee bashit plugin del git
-```
-
 ### Manage Aliases
 ```wee alias <add|del> <name> [cmd]```
 
