@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# rewee is an alias as it needs to modify current shell env
+rewee ()
+{
+	local tmpname="${PWD//\//-}"; tmpname=${tmpname#*-} 
+    [ ! -f "${HOME}/.wee/${tmpname}-in.sh" ] && return 0
+    local cmd="$(cat /tmp/rewee-cmd 2> /dev/null)"
+    rm -rf /tmp/rewee-cmd
+    [ -n "$cmd" ] && cmd="$cmd; cd; cd -" || cmd="cd; cd -"
+    eval "$cmd"
+    return 0
+}
+
+# Override default cd with wee-cd wrapper to source
+# cd-out & cd-in scripts for wee-configured projects
+cd ()
+{
+	builtin cd "${@}" || return $?
+
+	local f="${OLDPWD//\//-}"; f=${f#*-}
+	[ -f "${HOME}/.wee/${f}-out.sh" ] && . "${HOME}/.wee/${f}-out.sh"
+
+	f="${PWD//\//-}"; f=${f#*-}
+	[ -f "${HOME}/.wee/${f}-in.sh" ] && . "${HOME}/.wee/${f}-in.sh"
+}

@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+
+scriptn="$(basename $0)"
+usage()
+{
+	cat <<EOF
+wee - creates and manages project environment.
+Usage:
+  $scriptn create                       -> Creates wee environment setup for current project; 'y' enables basic helpers by default
+                                           Creates default startup cmd for .git projects: 'git status -sb'
+  $scriptn destroy                      -> Destroy existing wee environment management setup from current project
+  $scriptn show                         -> show env, startup/cleanup commands, aliases and function scriptns defined for this project
+  $scriptn env <add|del> <var> [value]  -> Add or delete an environment variable
+  $scriptn start <add|del> [cmd]        -> Add or delete a project-entry-time command
+  $scriptn clean <add|del> [cmd]        -> Add or delete a project-exit-time command
+  $scriptn alias <add|del> <name> [cmd] -> Add or delete a bash alias command
+  $scriptn func <add|del> <name>        -> Add or delete a bash function
+                                           NOTE: test function body before adding (debugging functions in wee may be time-consuming)
+
+EOF
+	exit $1
+}
+
+[ $# -lt 1 ] && usage 0
+
+gDir="$PWD"
+tmpname="${gDir//\//-}"; tmpname=${tmpname#*-}
+gSetupFile="${HOME}/.wee/${tmpname}-in.sh"
+gCleanupFile="${HOME}/.wee/${tmpname}-out.sh"
+
+wee-create()
+{
+	if [ -f "$gSetupFile" ]; then
+		echo "wee already created for $gDir" ; reload=false ; return 0
+	fi
+
+	echo "### wee setup for $gDir ###" > "$gSetupFile"
+	echo -e "\n# env\n\n# cmd\n\n# alias\n\n# func" >> "$gSetupFile"
+
+	echo "### wee cleanup for $gDir ###" > "$gCleanupFile"
+	echo -e "\n# env\n\n# cmd\n\n# alias\n\n# func" >> "$gCleanupFile"
+
+	[ -d ".git" ] && _wee_startup_cleanup_common start add "git status -sb"
+
+	echo "Created wee for $gDir"
+
+	return 0
+}
+
+wee-destroy()
+{
+	rm -rf "$gSetupFile" "$gCleanupFile"
+	return 0
+}
+
+wee-show()
+{
+	reload=false
+
+	local data=$(grep "^export" "$gSetupFile")
+	[ -n "$data" ] && echo -e "\n--------- env:\n$data"
+
+	local data=$(grep '^alias ' "$gSetupFile")
+	[ -n "$data" ] && echo -e "\n--------- aliases:\n$data"
+
+	local data=$(grep -E '^[a-zA-Z0-9_-]+\(\)' "$gSetupFile")
+	[ -n "$data" ] && echo -e "\n--------- functions:\n$data" | sed 's/ {$//'
+
+	local data=$(grep " #cmd[0-9]\+" "$gSetupFile")
+	[ -n "$data" ] && echo -e "\n--------- startup:\n$data" | sed 's/#cmd.*//'
+
+	local data=$(grep " #cmd[0-9]\+" "$gCleanupFile")
+	[ -n "$data" ] && echo -e "\n--------- cleanup:\n$data" | sed 's/#cmd.*//'
+
+	echo ""
+	return 0
+}
+
+wee-env()
+{
+	[ $# -lt 2 ] && echo "Need environment variable setup arguments!" && return -1
+
+	case $1 in
+		add)
+			grep "^export $2=" "$gSetupFile" && echo "$2 already defined!" && return 0
+			local name=$2; shift 2; local value=$*
+			[ -z "$value" ] && echo "Need value for env variable $name!" && return -3
+			sed -i "/^# env$/a export $name=$value" "$gSetupFile"
+			sed -i "/^# env$/a unset $name" "$gCleanupFile"
+			;;
+		del)
+			sed -i "/^export $2=.*/d" "$gSetupFile"
+			sed -i "/^unset $2/d" "$gCleanupFile"
+			echo "unset $2" > /tmp/rewee-cmd
+			;;
+		*)
+			echo "Invalid arguments env: $1 (Expected add/del)"
+			return -2
+			;;
+	esac
+
+	return $?
+}
+
+_wee_startup_cleanup_common()
+{
+	[ $# -lt 2 ] && echo "Need ${1} command setup arguments!" && return -1
+
+	local type=$1
+	local op=$2
+	[ "$type" == "start" ] && local file="$gSetupFile" || local file="$gCleanupFile"
+	local cmd 
+
+	case $op in
+		add)
+			shift 2
+			cmd="$*"
+			[ -z "$cmd" ] && echo "Need $type-up command (plus arguments if needed)" && return -2
+			local cmdID=$(grep '#cmd[0-9]\+' "$file" | awk '{print $NF}' | grep -o '[0-9]\+' | head -n1)
+			((cmdID++))
+			sed -i "/^# cmd$/a $cmd #cmd${cmdID}" "$file"
+			;;
+		del)
+			PS3="Select a command by index to delete: "
+			mapfile -t options < <(grep '#cmd' "$file" | sed 's/ #cmd.*//')
+			select cmd in "${options[@]}"; do
+				[ -z "$cmd" ] && echo "Invalid selection. Try again!" && continue
+				local cmdID=$(echo "$cmd" | awk '{print $NF}')
+				echo "==$cmd==,,$cmdID"
+				sed -i "\|$cmd|d" "$file"
+				break
+			done
+			unset options
+			;;
+		*)
+			echo "Invalid arguments $type: $op (Expected add/del)"
+			return -3
+			;;
+	esac
+
+	return 0
+}
+
+wee-start()
+{
+	_wee_startup_cleanup_common start "${@}"
+	return $?
+}
+
+wee-clean()
+{
+	_wee_startup_cleanup_common clean "${@}"
+	return $?
+}
+
+wee-alias()
+{
+	[ $# -lt 2 ] && echo "Need alias setup arguments!" && return -1
+
+	case $1 in
+		add)
+			local name="$2"; shift 2; local cmd="$*"
+			grep "^alias $name=" "$gSetupFile" 2>/dev/null && echo "$name already defined!" && return 0
+			sed -i "/^# alias$/a alias $name=\"$cmd\"" "$gSetupFile"
+			sed -i "/^# alias$/a unalias $name 2>/dev/null" "$gCleanupFile"
+			;;
+		del)
+			sed -i "/^alias $2.*/d" "$gSetupFile"
+			sed -i "/^unalias $2.*/d" "$gCleanupFile"
+			echo "unalias $2" > /tmp/rewee-cmd
+			;;
+		*)
+			echo "Invalid arguments alias: $1 (Expected add/del)"
+			return -2
+			;;
+	esac
+
+	return 0
+}
+
+wee-func()
+{
+	[ $# -lt 2 ] && echo "Need func setup arguments!" && return -1
+
+	case $1 in
+		add)
+			grep -qE "^$2\\(\\)" "$gSetupFile" 2>/dev/null && echo "$2 already defined!" && return 0
+			echo "Enter function body then Ctrl-D:"
+			local func_body=$(cat)
+			echo -e "sz() {\n$func_body\n}" > /tmp/$2-weef.tmp
+			sed -i "/^# func$/r /tmp/$2-weef.tmp" "$gSetupFile"
+			rm -rf /tmp/$2-weef.tmp
+			sed -i "/^# func$/a unset -f $2" "$gCleanupFile"
+			;;
+		del)
+			sed -i "/^$2()/,/^}/d" "$gSetupFile"
+			sed -i "/^unset -f $2$/d" "$gCleanupFile"
+			echo "unset -f $2" > /tmp/rewee-cmd
+			;;
+		*)
+			echo "Invalid arguments func: $1 (Expected add/del)"
+			return -2
+			;;
+	esac
+
+	return 0
+}
+
+! declare -F "wee-$1" >/dev/null && echo "Unknown option: $1" && usage -2
+
+if [ "$1" != "create" ] && [ ! -f "$gSetupFile" ]; then
+	echo -e "Do 'wee create' first!"
+	exit 0
+fi
+
+reload=true
+cmd=$1; shift
+"wee-$cmd" "$@" || usage $?
+$reload && echo -e "Run 'rewee' to reload environment immediately"
+
+exit 0
