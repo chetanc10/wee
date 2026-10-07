@@ -44,6 +44,14 @@ Note: wee is useful where there are generic environment management and script sh
 
 
 
+## Installation
+
+### Linux
+curl -fsSL https://github.com/chetanc10/wee/releases/latest/download/wee-linux-x86_64 | sudo tee /usr/local/bin/wee > /dev/null && sudo chmod +x /usr/local/bin/wee
+
+### Windows and MacOS TODO
+
+
 ## `weeproj` Template
 ### Sample `weeproj` directory tree
 ```
