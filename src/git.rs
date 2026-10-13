@@ -13,6 +13,9 @@ pub fn clone(url: &str, dest: &Path) -> Result<()> {
 }
 
 pub fn pull(dir: &Path) -> Result<()> {
+    // use latest and hard reset to latest commit and loose older 2 commits
+    // git fetch origin <branch-name> --depth=2
+    // git reset --hard origin/<branch-name>
     let status = Command::new("git")
         .args(["pull", "--ff-only"])
         .current_dir(dir)

@@ -1,13 +1,12 @@
 use anyhow::{Context, bail, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::{env, fs};
+use std::path::PathBuf;
+use std::fs;
 use std::fs::OpenOptions;
 use colored::Colorize;
 
 use crate::frags;
 use crate::git;
-use crate::shell;
 
 const MIN_MISE_VER: &str = "2026.8.10";
 
@@ -48,65 +47,32 @@ fn mise_ver_older(curr: &str, min: &str) -> bool {
 
 fn parse_user_repo(url: &str) -> (String, String) {
     let trimmed = url.trim_end_matches(['/', '\\']);
-    let is_url = trimmed.contains("://") || trimmed.starts_with("git@");
 
-    if is_url {
-        // Strip scheme or git@ prefix to get the path portion
-        let path_part = if let Some(idx) = trimmed.find("://") {
-            &trimmed[idx + 3..]
-        } else if let Some(idx) = trimmed.find('@') {
-            &trimmed[idx + 1..]
-        } else {
-            trimmed
-        };
+    if !trimmed.contains("://") && !trimmed.starts_with("git@") {
+        return ("".to_string(), "".to_string())
+    }
 
-        // Split by /, \, : → last two non-empty segments are user/repo
-        let segs: Vec<&str> = path_part
-            .split(['/', '\\', ':'])
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let repo = segs.last().copied().unwrap_or("unknown")
-            .strip_suffix(".git").unwrap_or("unknown");
-        let user = segs.get(segs.len().saturating_sub(2))
-            .copied().unwrap_or("unknown");
-
-        (user.to_string(), repo.to_string())
+    // Strip scheme or git@ prefix to get the path portion
+    let path_part = if let Some(idx) = trimmed.find("://") {
+        &trimmed[idx + 3..]
+    } else if let Some(idx) = trimmed.find('@') {
+        &trimmed[idx + 1..]
     } else {
-        let user = env::var("USER").unwrap_or_else(|_| "unknown".into());
-        let name = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed);
-        let repo = name.strip_suffix(".git").unwrap_or(name);
+        trimmed
+    };
 
-        (format!("local-{}", user), repo.to_string())
-    }
-}
+    // Split by /, \, : → last two non-empty segments are user/repo
+    let segs: Vec<&str> = path_part
+        .split(['/', '\\', ':'])
+        .filter(|s| !s.is_empty())
+        .collect();
 
-fn validate_tomls(repo_dir: &str, fragments: Option<&[String]>) -> bool {
-    for f in fragments.as_deref().unwrap_or(&[]) {
-        if !f.ends_with(".toml") {
-            continue;
-        }
-        let path = Path::new(repo_dir).join(f);
-        let content: String = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                println!("{} read error: {}", f, e);
-                return false;
-            }
-        };
+    let repo = segs.last().copied().unwrap_or("unknown")
+        .strip_suffix(".git").unwrap_or("unknown");
+    let user = segs.get(segs.len().saturating_sub(2))
+        .copied().unwrap_or("unknown");
 
-        if let Err(e) = toml::from_str::<toml::Value>(&content) {
-            println!("{} TOML parse error: {}", f, e);
-            return false;
-        }
-
-        if f.split('.').count() > 2 {
-            println!("{}: dot in filename breaks in mise 2027.8.10", f);
-            return false;
-        }
-    }
-
-    true
+    return (user.to_string(), repo.to_string());
 }
 
 impl Manifest {
@@ -178,10 +144,9 @@ impl Manifest {
                 print!("|-- fragments:");
                 let path = self.file.parent()
                     .expect("parent").join(r.name.clone());
-                let mut frags = shell::list_wee_repo_files(&path);
+                let mut frags = frags::list_wee_repo_files(&path);
                 for f in frags.iter_mut() {
-                    let name = f.strip_suffix(".toml").unwrap_or(&f);
-                    print!(" {}", name);
+                    print!(" {}", f.rsplit('/').next().unwrap_or(&f));
                 }
                 println!();
             }
@@ -209,6 +174,9 @@ impl Manifest {
     pub fn add_repo(&mut self, url: &str, dry_run: bool, verbose: bool)
         -> anyhow::Result<()> {
         let (u, r) = parse_user_repo(&url);
+        if u == "" || r == "" {
+            bail!("Invalid github url: '{}'", url.to_string());
+        }
         let repo_name = format!("{}/{}", u, r);   
         let repo_dir = self.file.parent().unwrap().join(&repo_name);
 
@@ -229,13 +197,13 @@ impl Manifest {
 
         git::clone(url, &repo_dir)?;
 
-        let frags = shell::list_wee_repo_files(&repo_dir);
+        let frags = frags::list_wee_repo_files(&repo_dir);
         if frags.is_empty() {
             fs::remove_dir_all(&repo_dir)?;
             bail!("no .toml files from {}", url);
         }
 
-        if !validate_tomls(repo_dir.to_str().unwrap(), Some(frags.as_slice())) {
+        if !frags::validate_frags(repo_dir.to_str().unwrap(), Some(frags.as_slice()), verbose) {
             fs::remove_dir_all(&repo_dir)?;
             bail!("Cleaning up {} cloned from {}", repo_dir.display(), url);
         }
@@ -280,8 +248,7 @@ impl Manifest {
             c.fragments.retain(|t| t.strip_prefix(&prefix).is_none());
         });
         // Remove repo specific files from all consumers
-        let _ = frags::run(self, frags::FDEL,
-            &repo_dir, &[], false, true)?;
+        let _ = frags::run(self, Some(&repo_name), false, true)?;
         // Remove the repo
         self.repos.retain(|r| r.name != repo_name);
         // Remove repo directory
@@ -292,43 +259,67 @@ impl Manifest {
         Ok(())
     }
 
+    pub fn get_full_repo_list(&mut self) -> Vec<PathBuf> {
+        let mut list = Vec::new();
+        let manf_dir = match self.file.parent() {
+            Some(d) => d,
+            None => return list,
+        };
+        if let Ok(user_entries) = fs::read_dir(manf_dir) {
+            for user_entry in user_entries.flatten() {
+                let user_path = user_entry.path();
+                if !user_path.is_dir() {
+                    continue;
+                }
+                if let Ok(repo_entries) = fs::read_dir(&user_path) {
+                    for repo_entry in repo_entries.flatten() {
+                        let repo_path = repo_entry.path();
+                        if repo_path.is_dir() && repo_path.join(".git").is_dir() {
+                            list.push(repo_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        list
+    }
+
     pub fn repo_present(&mut self, repo_name: &str) -> bool {
         self.repos.iter().any(|r| r.name == repo_name)
     }
 
     // ------------ Fragment handlers -------------
-    pub fn add_fragments(
+    pub fn load_consumer_fragments(
         &mut self,
         consumer: &str,
-        repo: &String,
-        fragments: &[String]) {
-        let exists = self.consumers.iter().any(|c| c.dir == consumer);
-        if !exists {
+        reponame: &String) -> Vec<String> {
+        if let Some(c) = self.consumers.iter().find(|c| c.dir == consumer) {
+            if !c.fragments.is_empty() {
+                return c.fragments.iter().filter(|f| f.starts_with(reponame)).cloned().collect();
+            }
+        }
+        return Vec::new();
+    }
+
+    pub fn save_consumer_fragments(
+        &mut self,
+        consumer: &str,
+        add_fragments: &[String],
+        del_fragments: &[String]) {
+        if !add_fragments.is_empty() && !self.consumers.iter().any(|c| c.dir == consumer) {
             self.consumers.push(Consumer {
                 dir: consumer.to_string(),
                 fragments: vec![],
             });
         }
-        let c = self.consumers.iter_mut().find(|c| c.dir == consumer).unwrap();
-        for f in fragments {
-            let fragentry = format!("{}/{}", repo, f);
-            if !c.fragments.contains(&fragentry) {
-                c.fragments.push(fragentry.clone());
+        let c: &mut Consumer = self.consumers.iter_mut().find(|c| c.dir == consumer).unwrap();
+        for f in add_fragments {
+            if !c.fragments.contains(&f) {
+                c.fragments.push(f.clone());
             }
         }
-    }
-
-    pub fn del_fragments(
-        &mut self,
-        consumer: &str,
-        repo: &String,
-        fragments: &[String]) {
-        let full_fragments: Vec<String> = fragments.iter().map(|f|
-                format!("{}/{}", repo, f)).collect();
-        if let Some(c) = self.consumers.iter_mut().find(|c| c.dir == consumer) {
-            c.fragments.retain(|f| !full_fragments.contains(f));
-        }
-        self.consumers.retain(|c| c.dir != consumer || !c.fragments.is_empty());
+        c.fragments.retain(|f| !del_fragments.contains(f));
     }
 
     // ------------ Consumer handlers -------------

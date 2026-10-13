@@ -53,22 +53,48 @@ curl -fsSL https://github.com/chetanc10/wee/releases/latest/download/wee-linux-x
 
 
 ## `weeproj` Template
+
+Refer to https://github.com/chetanc10/weegit for practical examples of `weeproj` and `fragment` templates.
+
 ### Sample `weeproj` directory tree
 ```
 .sample-directory-tree/
-├── base.toml
-├── gd1.bash // If script needed for bash
-├── gd1.ps1 // If script needed for powershell
+├── toml
+│   ├── base.toml
+│   └── build-custom.toml
+├── bash
+│   ├── bulk-check.bash
+│   └── inspect.bash
+├── zsh
+│   ├── bulk-check.zsh
+│   └── inspect.zsh
+├── fish
+│   ├── bulk-check.fish
+│   └── inspect.fish
+├── pwsh
+│   ├── bulk-check.pwsh
+│   └── inspect.pwsh
 ├── LICENSE // Ignored
 ├── README.md // Ignored
-├── dir1 // directories are ignored (dirs can have src to build/deploy binaries, wee doesn't touch directories anyway)
+├── dir1 // Other directories are ignored (dirs can have src to build/deploy binaries, wee doesn't touch directories anyway)
 ├── 2.sh // sh files are ignored (exact shell suffixed files only are considered - refer to `Terminology`)
-├── switch.c // Any other type files are ignored (refer to `Terminology`)
-└── tag.toml
+└── switch.c // Any other type files are ignored (refer to `Terminology`)
+```
+### Fragment Templates
+
+#### Fragment Descriptions
+Every toml fragment must describe in brief the purpose of the toml, at the start of toml:
+```
+_.about = "description of toml"
 ```
 
-### toml template
-Every toml file in a `weeproj` is expected to have following:
+Every bash, zsh, fish, pwsh fragment must describe in single-liner brief its puspose at the start of file:
+```
+#!/usr/bin/env <bash/zsh/fish/pwsh>
+# about: single-liner description
+``` 
+
+If a `weeproj` is supposed to contain atleast 1 binary (pulled from that project releases) relevant toml (that is related to that binary features) is expected to have following:
 ```
 [env]
 _.path = ["{{ config_root }}/bin"]
