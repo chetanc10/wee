@@ -23,15 +23,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Clone a fragment repo into the registry
+    /// Clone a weeproj into the registry
     Install {
-        /// Git URL of the fragment repo
+        /// Git URL of the weeproj
         url: String,
     },
-    /// Remove a fragment repo and all its references from all projects
+    /// Remove a weeproj and all its references from all projects
     Uninstall {
         /// Name of the repo to remove
-        name: String,
+        reponame: Option<String>,
+    },
+    /// Upgrage a weeproj and all its references from all projects
+    Upgrade {
+        /// Name of the repo to remove
+        reponame: Option<String>,
     },
     #[command(verbatim_doc_comment)]
     /// Copy or Remove fragments from existing weeproj(s) for current project
@@ -58,11 +63,20 @@ fn main() -> anyhow::Result<()> {
         Commands::Install { url } => {
             manf.add_repo(url, cli.dry_run, cli.verbose)
         },
-        Commands::Uninstall { name } => {
-            manf.del_repo(name, cli.dry_run)
+        Commands::Uninstall { reponame } => {
+            manf.del_repo(reponame.as_deref().unwrap_or(""), cli.dry_run, cli.verbose)
+        },
+        Commands::Upgrade { reponame } => {
+            manf.upgrade_repo(reponame.as_deref().unwrap_or(""), cli.dry_run, cli.verbose)
         },
         Commands::Frags{ reponame } => {
-            Ok(frags::run(&mut manf, reponame.as_deref(), cli.dry_run, cli.verbose)?)
+            Ok(frags::run(&mut manf,
+                    reponame.as_deref(),
+                    &std::env::current_dir()?.canonicalize()?,
+                    true,
+                    false,
+                    cli.dry_run,
+                    cli.verbose)?)
         },
         Commands::Info => {
             Ok(manf.show(cli.verbose))

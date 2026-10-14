@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
 
@@ -16,33 +16,40 @@ pub fn pull(dir: &Path) -> Result<()> {
     // use latest and hard reset to latest commit and loose older 2 commits
     // git fetch origin <branch-name> --depth=2
     // git reset --hard origin/<branch-name>
-    let status = Command::new("git")
-        .args(["pull", "--ff-only"])
-        .current_dir(dir)
-        .status()
-        .context("running git pull")?;
-    if !status.success() {
-        bail!("git pull failed in {}", dir.display());
-    }
-    Ok(())
-}
 
-pub fn diff_last(dir: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["diff", "HEAD~1"])
+    // Get branch info to fetch that alone
+    let branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(dir)
         .output()
-        .context("running git diff")?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
+        .expect("failed to run git")
+        .stdout;
+    let branch = String::from_utf8_lossy(&branch).trim().to_string();
 
-pub fn reset_hard_head(dir: &Path, ref_: &str) -> Result<()> {
-    Command::new("git")
-        .args(["reset", "--hard", ref_])
+    // Fetch latest
+    let out = Command::new("git")
+        .args(["fetch", "origin", &branch])
         .current_dir(dir)
-        .status()
-        .context("running git reset")?
-        .success()
-        .then(|| ())
-        .ok_or_else(|| anyhow::anyhow!("git reset failed"))
+        .output()
+        .expect("failed to run git fetch");
+    if !out.status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            String::from_utf8_lossy(&out.stderr),
+        ).into());
+    }
+
+    // Reset commit HEAD preserving older HEAD as oldest commit
+    let out = Command::new("git")
+        .args(["reset", "--hard", &format!("origin/{}", branch)])
+        .current_dir(dir)
+        .output()
+        .expect("failed to run git reset");
+    if !out.status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        ).into());
+    }
+    Ok(())
 }

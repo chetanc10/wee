@@ -143,53 +143,15 @@ fn about_frag(path: &Path) -> Option<String> {
     }
 }
 
-fn pick_fragments(repodir: &Path, known_frags: Vec<String>, verbose: bool) -> Vec<String> {
-    let os_suf = os_suffix();
-    let shell_suf = shell_suffix();
-    let targets: Vec<String> = vec!["toml".to_string(), shell_suf.to_string(), os_suf.to_string()];
-    // Each frag_list entry: (filename, fragment, description-per-filename)
-    // e.g. ("base.toml", "chetanc10/weegit:base.toml", "Shortcuts for most-used git commands")
-    let mut frag_list: Vec<(String, String, String)> = Vec::new();
-    let mut result: Vec<String> = Vec::new();
-
-    let reponame = format!("{}/{}",
-        repodir.file_name().unwrap().to_string_lossy(), 
-        repodir.parent().unwrap().file_name().unwrap().to_string_lossy()
-    );
-    // Collect fragments from given repodir as per OS & shell along with
-    // the fragment consumption status for current project directory
-    for entry in fs::read_dir(repodir).unwrap().flatten() {
-        let dname = entry.file_name().to_string_lossy().into_owned();
-        if !targets.contains(&dname) || !entry.path().is_dir()  { continue; }
-        let dir = repodir.join(&dname);
-        for f in fs::read_dir(&dir).into_iter().flatten() {
-            let p = f.as_ref().expect("REASON").path();
-            let fname: String = f.as_ref().expect("REASON").file_name().to_string_lossy().into_owned();
-            if !p.is_file() || !fname.ends_with(&dname) { continue; }
-            if let Some(s) = about_frag(&p) {
-                frag_list.push((fname.to_string(),
-                format!("{}:{}", reponame, fname.to_string()), s));
-            }
-        }
-    }
-
-    // Mark frag_list entries that are already consumed by current project
-    let mut selected: Vec<bool> = vec![false; frag_list.len()];
-    let mut i = 0;
-    for (_, frag, _) in &frag_list {
-        if verbose && known_frags.contains(&frag){
-            println!("[VERBOSE] {}:{} is known", reponame, frag);
-        }
-        selected[i] = known_frags.contains(&frag);
-        i += 1;
-    }
-    let bak_selected = selected.clone();
-
-    // Loop with interactive checklist till user breaks the loop
+fn allow_user_frag_selection(
+    frag_list: &Vec<(String, String, String)>,
+    selected: &mut Vec<bool>
+)-> (Vec<bool>, bool) {
     let mut list_state = ListState::default().with_selected(Some(0));
     let mut done = false;
     let mut confirmed = false;
     let mut terminal = ratatui::init();
+
     loop {
         terminal.draw(|frame| {
             let items: Vec<ListItem> = frag_list.iter()
@@ -234,6 +196,65 @@ fn pick_fragments(repodir: &Path, known_frags: Vec<String>, verbose: bool) -> Ve
         if done { break; }
     }
     ratatui::restore();
+
+    return (selected.to_vec(), confirmed);
+}
+
+fn pick_fragments(
+    repodir: &Path,
+    known_frags: Vec<String>,
+    verbose: bool,
+    selection_needed: bool,
+    repo_frags_delete: bool
+) -> Vec<String> {
+    let os_suf = os_suffix();
+    let shell_suf = shell_suffix();
+    let targets: Vec<String> = vec!["toml".to_string(), shell_suf.to_string(), os_suf.to_string()];
+    // Each frag_list entry: (filename, fragment, description-per-filename)
+    // e.g. ("base.toml", "chetanc10/weegit:base.toml", "Shortcuts for most-used git commands")
+    let mut frag_list: Vec<(String, String, String)> = Vec::new();
+    let mut result: Vec<String> = Vec::new();
+
+    let reponame = format!("{}/{}",
+        repodir.file_name().unwrap().to_string_lossy(), 
+        repodir.parent().unwrap().file_name().unwrap().to_string_lossy()
+    );
+    // Collect fragments from given repodir as per OS & shell along with
+    // the fragment consumption status for current project directory
+    for entry in fs::read_dir(repodir).unwrap().flatten() {
+        let dname = entry.file_name().to_string_lossy().into_owned();
+        if !targets.contains(&dname) || !entry.path().is_dir()  { continue; }
+        let dir = repodir.join(&dname);
+        for f in fs::read_dir(&dir).into_iter().flatten() {
+            let p = f.as_ref().expect("REASON").path();
+            let fname: String = f.as_ref().expect("REASON").file_name().to_string_lossy().into_owned();
+            if !p.is_file() || !fname.ends_with(&dname) { continue; }
+            if let Some(s) = about_frag(&p) {
+                frag_list.push((fname.to_string(),
+                format!("{}:{}", reponame, fname.to_string()), s));
+            }
+        }
+    }
+
+    let mut selected: Vec<bool> = Vec::new();
+    if !repo_frags_delete {
+        // Mark frag_list entries that are already consumed by current project
+        selected = vec![false; frag_list.len()];
+        let mut i = 0;
+        for (_, frag, _) in &frag_list {
+            if verbose && known_frags.contains(&frag){
+                println!("[VERBOSE] {}:{} is known", reponame, frag);
+            }
+            selected[i] = known_frags.contains(&frag);
+            i += 1;
+        }
+    }
+    let bak_selected = selected.clone();
+    let mut confirmed = false;
+
+    if selection_needed {
+        (selected, confirmed) = allow_user_frag_selection(&frag_list, &mut selected);
+    }
 
     if !confirmed {
         if verbose {
@@ -298,7 +319,7 @@ pub fn validate_frags(repodir: &str, fragments: Option<&[String]>, verbose: bool
     true
 }
 
-fn repo_name_to_path(reponame: Option<&str>, manf: &mut Manifest) -> Vec<PathBuf> {
+pub fn repo_name_to_path(reponame: Option<&str>, manf: &mut Manifest) -> Vec<PathBuf> {
     // For empty reponame, return list with all installed repo dir paths
     let reponame = match reponame {
         Some(name) if !name.is_empty() => name,
@@ -317,29 +338,41 @@ fn repo_name_to_path(reponame: Option<&str>, manf: &mut Manifest) -> Vec<PathBuf
     return vec![];
 }
 
-pub fn run(
-    manf: &mut Manifest,
-    reponame: Option<&str>,
-    dry_run: bool,
-    verbose: bool
-) -> Result<()> {
-    let repodirs = repo_name_to_path(reponame, manf);
+pub fn validate_repodirs_list(repodirs: Vec<PathBuf>, op_str: String, dry_run: bool) -> bool {
     if repodirs.is_empty() {
         eprintln!("{} No weeproj found!", "✗".red());
-        return Ok(());
+        return false;
     } else if repodirs.len() == 1 && !repodirs[0].is_dir() {
         eprintln!("{} repo for {} doesn't exist!", "✗".red(), repodirs[0].display());
-        return Ok(());
+        return false;
     } else if repodirs.len() > 1 {
         println!("{} No reponame given. Using all repos:", "⚠".yellow());
         for p in &repodirs {
             println!("{} ", p.display());
         }
-        eprintln!("Press <ENTER> to start per-repo fragment selection..");
+        if dry_run { return true; }
+        eprintln!("Press <ENTER> to do per-repo {} or Ctrl-c to exit..", op_str);
+        // User can exit with Ctrl-C if user doesn't want to act on all repos
         std::io::stdin().read_line(&mut String::new()).unwrap();
     }
+    return true;
+}
 
-    let project = std::env::current_dir()?.canonicalize()?;
+pub fn run(
+    manf: &mut Manifest,
+    reponame: Option<&str>,
+    project: &PathBuf,
+    selection_needed: bool,
+    repo_frags_delete: bool,
+    dry_run: bool,
+    verbose: bool
+) -> Result<()> {
+    let repodirs = repo_name_to_path(reponame, manf);
+    let repodir_valid = validate_repodirs_list(repodirs.clone(), "fragment selection".to_string(), dry_run);
+    if !repodir_valid {
+        return Ok(());
+    }
+
     let conf_d = project.join(".mise/conf.d");
 
     for repodir in repodirs {
@@ -352,13 +385,17 @@ pub fn run(
         let known_frags = manf.load_consumer_fragments(
             &project.to_string_lossy().into_owned(), &reponame);
         if verbose {
-            print!("[VERBOSE] known frags from {} (count={}): ", repodir.display(), known_frags.len());
+            print!("[VERBOSE] known frags from {} (count={}): ", reponame, known_frags.len());
             for f in &known_frags {
                 print!(" {}", &f.clone());
             }
             println!("");
         }
-        let frags = pick_fragments(&repodir, known_frags.clone(), verbose);
+        let frags = pick_fragments(&repodir,
+            known_frags.clone(),
+            verbose,
+            selection_needed,
+            repo_frags_delete);
         if {
             let mut sfrags = frags.clone();
             let mut skfrags = known_frags.clone();
@@ -368,7 +405,7 @@ pub fn run(
         } {
             if verbose {
                 println!("[VERBOSE] {} no fragment changes from repo {}",
-                    "⚠".yellow(), repodir.display());
+                    "⚠".yellow(), reponame);
             }
             continue;
         }
@@ -376,10 +413,11 @@ pub fn run(
         // Check if atleast 1 fragment is toml
         if !frags.iter().any(|s| s.ends_with("toml")) &&
             !known_frags.iter().any(|s| s.ends_with("toml")) {
-                eprintln!("{} No toml fragment selected from {}", "✗".red(), repodir.display());
+                eprintln!("{} No toml fragment selected from {}", "✗".red(), reponame);
                 continue;
         }
-        // First identify added and deleted fragments; if none, continue
+
+        // First identify added and deleted fragments
         let mut add_frags: Vec<String> = Vec::new();
         let mut del_frags: Vec<String> = Vec::new();
         for frag in &frags {
@@ -400,14 +438,11 @@ pub fn run(
         }
 
         if verbose {
-            println!("{} fragments changed!", repodir.display());
+            println!("{} fragments changed!", reponame);
         }
         let conf_d_bin = conf_d.join("bin");
         // Ensure local .mise/conf_d/bin directory is created
         if !add_frags.is_empty() && !conf_d_bin.exists() {
-            if verbose {
-                println!("create {} first", conf_d_bin.display());
-            }
             fs::create_dir_all(&conf_d_bin)?;
         }
 
@@ -449,7 +484,7 @@ pub fn run(
         }
 
         if dry_run {
-            return Ok(());
+            continue;
         }
 
         // Update consumer fragment list in manifest

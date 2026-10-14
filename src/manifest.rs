@@ -219,7 +219,44 @@ impl Manifest {
         Ok(())
     }
 
-    pub fn del_repo(&mut self, repo_name: &str, dry_run: bool) -> Result<()> {
+    pub fn upgrade_repo(&mut self, reponame: &str, dry_run: bool, verbose: bool)
+        -> anyhow::Result<()> {
+        let repodirs = frags::repo_name_to_path(Some(reponame), self);
+        let repodir_valid = frags::validate_repodirs_list(repodirs.clone(), "upgrade".to_string(), dry_run);
+        if !repodir_valid {
+            return Ok(());
+        }
+
+        for repodir in repodirs {
+            let reponame = format!("{}/{}",
+                repodir.file_name().unwrap().to_string_lossy(), 
+                repodir.parent().unwrap().file_name().unwrap().to_string_lossy()
+            );
+            if dry_run {
+                println!("{} upgrade {} and corresponding fragments in consumers",
+                    "would".yellow(), reponame);
+            } else {
+                // Upgrade repo first
+                git::pull(&repodir)?;
+            }
+
+            // Update repo's fragment copies in relevant consumers
+            let _ = frags::run(self,
+                Some(&reponame),
+                &std::env::current_dir()?.canonicalize()?,
+                false,
+                false,
+                dry_run,
+                verbose)?;
+            if !dry_run {
+                println!("{} upgraded {}", "✓".green(), reponame);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn del_repo(&mut self, repo_name: &str, dry_run: bool, verbose: bool) -> Result<()> {
         if !self.repo_present(repo_name) {
             bail!("Manifest has no such repo: '{}'", repo_name);
         }
@@ -231,30 +268,36 @@ impl Manifest {
         }
 
         if dry_run {
-            println!("{} remove {} and all its symlinks",
+            println!("{} remove {} and its fragments from consumers",
                 "would".yellow(), repo_dir.display());
-            return Ok(());
+        } else {
+            // remove repo fragment references from consumers manifests
+            self.consumers.iter_mut().for_each(|c| {
+                let prefix = format!("{repo_name}:");
+                let to_delete: Vec<String> = c.fragments.iter()
+                    .filter(|t| t.starts_with(&prefix)).cloned().collect();
+                for frag in &to_delete {
+                    let path = PathBuf::from(&c.dir).join(frag);
+                    let _ = std::fs::remove_file(&path);
+                }
+                c.fragments.retain(|t| t.strip_prefix(&prefix).is_none());
+            });
         }
-
-        // remove repo fragment references from consumers manifests
-        self.consumers.iter_mut().for_each(|c| {
-            let prefix = format!("{repo_name}/");
-            let to_delete: Vec<String> = c.fragments.iter()
-                .filter(|t| t.starts_with(&prefix)).cloned().collect();
-            for frag in &to_delete {
-                let path = PathBuf::from(&c.dir).join(frag);
-                let _ = std::fs::remove_file(&path);
-            }
-            c.fragments.retain(|t| t.strip_prefix(&prefix).is_none());
-        });
         // Remove repo specific files from all consumers
-        let _ = frags::run(self, Some(&repo_name), false, true)?;
-        // Remove the repo
-        self.repos.retain(|r| r.name != repo_name);
-        // Remove repo directory
-        fs::remove_dir_all(&repo_dir)?;
-
-        println!("{} uninstalled {}", "✓".green(), repo_name);
+        let _ = frags::run(self,
+            Some(&repo_name),
+            &std::env::current_dir()?.canonicalize()?,
+            false,
+            true,
+            dry_run,
+            verbose)?;
+        if !dry_run {
+            // Remove the repo
+            self.repos.retain(|r| r.name != repo_name);
+            // Remove repo directory
+            fs::remove_dir_all(&repo_dir)?;
+            println!("{} uninstalled {}", "✓".green(), repo_name);
+        }
 
         Ok(())
     }
