@@ -267,30 +267,42 @@ impl Manifest {
             return Ok(());
         }
 
-        if dry_run {
-            println!("{} remove {} and its fragments from consumers",
-                "would".yellow(), repo_dir.display());
-        } else {
-            // remove repo fragment references from consumers manifests
-            self.consumers.iter_mut().for_each(|c| {
+        // remove repo fragment references from consumers
+        for i in 0..self.consumers.len() {
+            let (c_dir, to_delete) = {
                 let prefix = format!("{repo_name}:");
-                let to_delete: Vec<String> = c.fragments.iter()
+                let to_delete: Vec<String> = self.consumers[i].fragments.iter()
                     .filter(|t| t.starts_with(&prefix)).cloned().collect();
-                for frag in &to_delete {
-                    let path = PathBuf::from(&c.dir).join(frag);
-                    let _ = std::fs::remove_file(&path);
-                }
-                c.fragments.retain(|t| t.strip_prefix(&prefix).is_none());
-            });
+                (self.consumers[i].dir.clone(), to_delete)
+            };
+
+            if to_delete.is_empty() { continue; }
+
+            if dry_run {
+                println!("[DRY-RUN] {} remove {} fragments from consumer {}",
+                    "would".yellow(), repo_dir.display(), c_dir);
+                continue;
+            }
+
+            let _ = frags::run(self,
+                Some(&repo_name),
+                &PathBuf::from(&c_dir),
+                false, true, dry_run, verbose)?;
+
+            for frag in &to_delete {
+                let path = PathBuf::from(&c_dir).join(frag);
+                let _ = fs::remove_file(&path);
+            }
+
+            let prefix = format!("{repo_name}:");
+            self.consumers[i].fragments.retain(|t| t.strip_prefix(&prefix).is_none());
+
+            if verbose {
+                println!("[VERBOSE] Removed {} fragments from consumer {}",
+                    repo_dir.display(), c_dir);
+            }
         }
-        // Remove repo specific files from all consumers
-        let _ = frags::run(self,
-            Some(&repo_name),
-            &std::env::current_dir()?.canonicalize()?,
-            false,
-            true,
-            dry_run,
-            verbose)?;
+
         if !dry_run {
             // Remove the repo
             self.repos.retain(|r| r.name != repo_name);
@@ -332,7 +344,7 @@ impl Manifest {
         self.repos.iter().any(|r| r.name == repo_name)
     }
 
-    // ------------ Fragment handlers -------------
+    // ------------ Consumer handlers -------------
     pub fn load_consumer_fragments(
         &mut self,
         consumer: &str,
@@ -387,7 +399,6 @@ impl Manifest {
         c.fragments.retain(|f| !del_fragments.contains(f));
     }
 
-    // ------------ Consumer handlers -------------
     pub fn check_if_consumer(&mut self, consumer: &str) -> bool {
         self.consumers.iter().any(|c| c.dir == consumer)
     }
@@ -396,7 +407,7 @@ impl Manifest {
         self.consumers.iter().map(|c| PathBuf::from(&c.dir)).collect()
     }
 
-    pub fn remove_consumer(&mut self, consumer: &str) {
-        self.consumers.retain(|c| c.dir != consumer);
+    pub fn remove_consumer(&mut self, consumer: &str) -> bool {
+        self.consumers.extract_if(.., |c| c.dir == consumer).any(|_| true)
     }
 }

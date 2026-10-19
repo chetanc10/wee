@@ -569,9 +569,8 @@ fn find_wee_enabled_files(consumers: &[PathBuf], recurse: bool) -> Vec<PathBuf> 
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
-                .filter_map(|e| e.path().strip_prefix(root).ok().map(PathBuf::from))
-                .filter(|rel| *rel == target)
-                .for_each(|rel| {if let Ok(p) = fs::canonicalize(rel) { results.push(p); } });
+                .filter(|e| e.path().to_string_lossy().contains(target.to_str().unwrap()))
+                .for_each(|e| { results.push(e.path().to_path_buf()); });
         }
     }
 
@@ -618,10 +617,11 @@ pub fn refresh(
         if dry_run {
             println!("[DRY-RUN] would remove: {}", c.display());
         } else {
-            manf.remove_consumer(&c.to_str().unwrap());
-            cleanup_mise_cfg = true;
-            if verbose {
-                println!("[VERBOSE] Removed: {}", c.display());
+            if manf.remove_consumer(&c.to_str().unwrap()) {
+                cleanup_mise_cfg = true;
+                if verbose {
+                    println!("[VERBOSE] Removed: {}", c.display());
+                }
             }
         }
     }
@@ -633,10 +633,11 @@ pub fn refresh(
         if dry_run {
             println!("[DRY-RUN] would remove: {}", c.display());
         } else {
-            manf.remove_consumer(&c.to_str().unwrap());
-            cleanup_mise_cfg = true;
-            if verbose {
-                println!("[VERBOSE] Removed: {}", c.display());
+            if manf.remove_consumer(&c.to_str().unwrap()) {
+                cleanup_mise_cfg = true;
+                if verbose {
+                    println!("[VERBOSE] Removed: {}", c.display());
+                }
             }
         }
     }
