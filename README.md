@@ -130,7 +130,7 @@ This clones a `weeproj` using given URL and confirms it has atleast 1 toml()  io
 
 
 #### Removing `weeproj`
-```wee destroy <username/reponame>```  
+```wee uninstall <username/reponame>```  
 This removes specific `weeproj` from disk and removes references/copies of it's `fragment` files from all 'consumer' projects.
 
 

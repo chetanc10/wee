@@ -14,7 +14,7 @@ use crossterm::event::{self, Event, KeyCode};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::manifest::Manifest;
 
@@ -187,6 +187,10 @@ fn allow_user_frag_selection(
     let mut done = false;
     let mut confirmed = false;
     let mut terminal = ratatui::init();
+    let mut all_sel = false;
+    let mut all_toml_sel = false;
+    let mut all_scripts_sel = false;
+    let mut all_bins_sel = false;
 
     loop {
         let _ = terminal.draw(|frame| {
@@ -203,12 +207,12 @@ fn allow_user_frag_selection(
                 .highlight_symbol("> ");
 
             let help = Paragraph::new(
-                "↑/↓ move · SPACE toggle · ENTER confirm · ESC cancel"
-            ).style(Style::default().fg(Color::Yellow));
+                "↑/↓ move · SPACE toggle · 'a' toggle all · 't' toggle all tomls · 's' toggle all scripts · 'b' toggle all binaries · ENTER confirm · ESC cancel"
+            ).wrap(Wrap { trim: true }).style(Style::default().fg(Color::Yellow));
 
             let chunks = Layout::vertical([
                 Constraint::Min(1),
-                Constraint::Length(1),
+                Constraint::Length(3),
             ]).split(frame.area());
 
             frame.render_stateful_widget(list, chunks[0], &mut list_state);
@@ -223,6 +227,33 @@ fn allow_user_frag_selection(
                     if let Some(i) = list_state.selected() {
                         selected[i] = !selected[i];
                     }
+                }
+                KeyCode::Char('a') => {
+                    all_sel = !all_sel;
+                    let len = selected.len();
+                    selected[..len].fill(all_sel);
+                }
+                KeyCode::Char(c @ 't' | c @ 's' | c @ 'b') => {
+                    let shell_sfx = format!(".{}", shell_suffix());
+                    let os_sfx = format!(".{}", os_suffix());
+                    let suffix = match c {
+                        't' => ".toml",
+                        's' => &shell_sfx,
+                        'b' => &os_sfx,
+                        _   => ".unknown",
+                    };
+                    let flag = match c {
+                        't' => &mut all_toml_sel,
+                        's' => &mut all_scripts_sel,
+                        'b' => &mut all_bins_sel,
+                        _   => &mut false,
+                    };
+                    *flag = !*flag;
+                    for (i, (fname, _, _)) in frag_list.iter().enumerate() {
+                        if fname.ends_with(suffix) {
+                            selected[i] = *flag;
+                        }
+                    }    
                 }
                 KeyCode::Enter => { done = true; confirmed = true; }
                 KeyCode::Esc => { done = true; }
