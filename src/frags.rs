@@ -1,4 +1,4 @@
-use anyhow::{Result};
+use anyhow::{anyhow, Result};
 use colored::Colorize;
 use std::{
     env,
@@ -8,6 +8,8 @@ use std::{
     path::PathBuf,
     process::Command,
 };
+use walkdir::WalkDir;
+
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
@@ -16,6 +18,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 use crate::manifest::Manifest;
 
+const WEE_EN_FILEPATH: &str = ".mise/wee_enabled.txt";
 const DIRS: [&str; 5] = ["toml", "bash", "zsh", "fish", "pwsh"];
 
 const EXTENSIONS: &[&str] = &[
@@ -47,6 +50,49 @@ pub fn shell_suffix() -> &'static str {
     }
 }
 
+fn prune_stale_mise_configs(verbose: bool) -> Result<()> {
+    let home = dirs::home_dir().expect("no home dir");
+    let state_dir = home.join(".local/state/mise");
+
+    for subdir in ["tracked-configs", "trusted-configs", "ignored-configs"] {
+        let dir = state_dir.join(subdir);
+        if !dir.exists() { continue; }
+
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if !path.is_symlink() { continue; }
+            let target = fs::read_link(&path)?;
+            if !target.exists() {
+                if verbose {
+                    println!("[VERBOSE] removing stale: {} -> {}",
+                        path.display(), target.display());
+                }
+                fs::remove_file(&path)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn mise_reshell(verbose: bool) -> Result <()> {
+    let output = Command::new("mise").arg("reshell").output()?;
+    let e = format!("{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr));
+    let errors: String = e.lines().filter(|l| {!l.contains("no tasks")
+        && !l.contains("Version:") && !l.contains("MISE_VERBOSE")})
+        .collect::<Vec<_>>().join("\n");
+    if errors.is_empty() {
+        if verbose {
+            println!("[VERBOSE] ran mise reshell");
+        }
+    } else {
+        println!("{}", "NOTE: Run `mise reshell` or reload shell now".yellow());
+    }
+
+    Ok(())
+}
 pub fn get_copy_path(repo: &String, name: &String, conf_d: &String) -> String {
     let os_suf = os_suffix();
     let os_suf_pat = format!(".{}", os_suf);
@@ -108,16 +154,6 @@ pub fn list_wee_repo_files(dir: &Path) -> Vec<String> {
     results
 }
 
-fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    for ext in EXTENSIONS {
-        let candidate = dir.join(format!("{}.{}", name, ext));
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
 fn about_frag(path: &Path) -> Option<String> {
     let pathstr = path.to_string_lossy();
     let suf = pathstr.rsplit_once('.').map(|(_, e)| e);
@@ -153,7 +189,7 @@ fn allow_user_frag_selection(
     let mut terminal = ratatui::init();
 
     loop {
-        terminal.draw(|frame| {
+        let _ = terminal.draw(|frame| {
             let items: Vec<ListItem> = frag_list.iter()
                 .enumerate().map(|(i, (fname, _, desc))| {
                     let check = if selected[i] { "[✔]" } else { "[ ]" };
@@ -370,7 +406,8 @@ pub fn run(
     let repodirs = repo_name_to_path(reponame, manf);
     let repodir_valid = validate_repodirs_list(repodirs.clone(), "fragment selection".to_string(), dry_run);
     if !repodir_valid {
-        return Ok(());
+        return Err(anyhow!("{} No valid repodir: sel_need {} frags_del {}",
+                "✗".red(), selection_needed, repo_frags_delete));
     }
 
     let conf_d = project.join(".mise/conf.d");
@@ -442,8 +479,12 @@ pub fn run(
         }
         let conf_d_bin = conf_d.join("bin");
         // Ensure local .mise/conf_d/bin directory is created
-        if !add_frags.is_empty() && !conf_d_bin.exists() {
+        if !add_frags.is_empty() && !conf_d_bin.exists() && !dry_run {
             fs::create_dir_all(&conf_d_bin)?;
+            fs::write(
+                &project.join(".mise").join("wee_enabled.txt"),
+                project.as_os_str().as_encoded_bytes()
+            )?;
         }
 
         // Copy and Remove fragment files under project's .mise/conf_d/ path
@@ -505,21 +546,172 @@ pub fn run(
             }
         }
 
-        // Auto reshell
-        let output = Command::new("mise").arg("reshell").output()?;
-        let e = format!("{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr));
-        let errors: String = e.lines().filter(|l| {!l.contains("no tasks")
-            && !l.contains("Version:") && !l.contains("MISE_VERBOSE")})
-            .collect::<Vec<_>>().join("\n");
-        if errors.is_empty() {
-            if verbose {
-                println!("ran mise reshell");
+        mise_reshell(verbose)?;
+    }
+
+    Ok(())
+}
+
+fn find_wee_enabled_files(consumers: &[PathBuf], recurse: bool) -> Vec<PathBuf> {
+    let target = Path::new(WEE_EN_FILEPATH);
+    let mut results = Vec::new();
+
+    for root in consumers {
+        if !recurse {
+            let full = root.join(target);
+            if full.is_file() {
+                if let Ok(p) = fs::canonicalize(target) {
+                    results.push(p);
+                }
             }
         } else {
-            println!("{}", "NOTE: Run `mise reshell` or reload shell now".yellow());
+            WalkDir::new(root)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+                .filter_map(|e| e.path().strip_prefix(root).ok().map(PathBuf::from))
+                .filter(|rel| *rel == target)
+                .for_each(|rel| {if let Ok(p) = fs::canonicalize(rel) { results.push(p); } });
         }
+    }
+
+    results
+}
+
+pub fn refresh(
+    manf: &mut Manifest,
+    consumers: &[PathBuf],
+    recurse: bool,
+    dry_run: bool,
+    verbose: bool
+) -> Result<()> {
+    let mut cleanup_mise_cfg: bool = false;
+    let mut mise_do_reshell: bool = false;
+
+    // For each WEE_EN_FILEPATH container, create new consumer metadata
+    let wee_en_files = find_wee_enabled_files(&consumers, recurse);
+    for weenfile in &wee_en_files {
+        let mise_path = weenfile.parent().unwrap().to_path_buf();
+        let proj_path = fs::canonicalize(mise_path.parent().unwrap().to_path_buf())?;
+        let content = fs::read_to_string(weenfile)?.trim().to_string();
+        let proj_path_from_file = Path::new(&content);
+        if proj_path_from_file == proj_path { continue; }
+
+        if dry_run {
+            println!("[DRY-RUN] would update: {} → {}", proj_path.display(), weenfile.display());
+        } else {
+            fs::write(weenfile, format!("{}\n", proj_path.display()))?;
+            if verbose {
+                println!("[VERBOSE] Updated: {} → {}", proj_path.display(), weenfile.display());
+            }
+            manf.port_consumer_fragments(
+                &proj_path_from_file.to_str().unwrap(),
+                &proj_path.to_str().unwrap()
+            )?;
+            mise_do_reshell = true;
+        }
+    }
+
+    // For each consumer from given consumer list, remove those without WEE_EN_FILEPATH
+    for c in consumers {
+        if c.join(".mise").join("wee_enabled.txt").is_file() { continue; }
+        if dry_run {
+            println!("[DRY-RUN] would remove: {}", c.display());
+        } else {
+            manf.remove_consumer(&c.to_str().unwrap());
+            cleanup_mise_cfg = true;
+            if verbose {
+                println!("[VERBOSE] Removed: {}", c.display());
+            }
+        }
+    }
+
+    // For each consumer from consumer list from wee metadata, remove those without WEE_EN_FILEPATH
+    let consumers_from_metadata = manf.get_full_consumer_list();
+    for c in &consumers_from_metadata {
+        if c.join(".mise").join("wee_enabled.txt").is_file() { continue; }
+        if dry_run {
+            println!("[DRY-RUN] would remove: {}", c.display());
+        } else {
+            manf.remove_consumer(&c.to_str().unwrap());
+            cleanup_mise_cfg = true;
+            if verbose {
+                println!("[VERBOSE] Removed: {}", c.display());
+            }
+        }
+    }
+
+    // Cleanup mise trust configuration in case any consumer is removed from manifest
+    if cleanup_mise_cfg && !dry_run {
+        prune_stale_mise_configs(verbose)?;
+    }
+
+    if mise_do_reshell {
+        mise_reshell(verbose)?;
+    }
+
+    Ok(())
+}
+
+fn copy_dir_all(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+
+        if ft.is_symlink() {
+            return Err(anyhow!("Aborting due to symlink {}", entry.path().display()));
+        }
+        if ft.is_dir() {
+            copy_dir_all(&entry.path(), &to.join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), to.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn port(
+    manf: &mut Manifest,
+    port_path: &PathBuf,
+    dry_run: bool,
+    verbose: bool
+) -> Result<()> {
+    let curr_path = std::env::current_dir()?.canonicalize()?;
+    if curr_path == *port_path {
+        return Err(anyhow!("{} Cannot port to/from local path!", "⚠".yellow()));
+    }
+
+    let wee_on_currp = manf.check_if_consumer(curr_path.to_str().unwrap());
+    let wee_on_portp = manf.check_if_consumer(port_path.to_str().unwrap());
+
+    // If both current and port paths are either non-consumers or active consumers
+    // we cannot port fragments from one to the other either because of no fragments
+    // or both having fragments which can't be overwritten
+    if wee_on_currp == wee_on_portp {
+        return Err(anyhow!("{} Port failed port-path & PWD are both active (or no) consumers!", "⚠".yellow()));
+    }
+
+    let (src_path, dst_path): (&Path, &Path) = if wee_on_currp {
+        (curr_path.as_path(), port_path.as_path())
+    } else {
+        (port_path.as_path(), curr_path.as_path())
+    };
+
+    // Copy fragments from source to dstination and update manifest
+    if dry_run {
+        println!("[DRY-RUN] would copy frags from {} to {} ..",
+            src_path.display(), dst_path.display());
+    } else {
+        if verbose {
+            println!("[VERBOSE] Copying frags from {} to {} ..",
+                src_path.display(), dst_path.display());
+        }
+
+        copy_dir_all(&src_path.join(".mise"), &dst_path.join(".mise"))?;
+        manf.port_consumer_fragments(src_path.to_str().unwrap(), dst_path.to_str().unwrap())?;
+
+        mise_reshell(verbose)?;
     }
 
     Ok(())

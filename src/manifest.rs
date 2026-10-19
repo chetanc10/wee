@@ -1,4 +1,4 @@
-use anyhow::{Context, bail, Result};
+use anyhow::{anyhow, Context, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::fs;
@@ -336,13 +336,35 @@ impl Manifest {
     pub fn load_consumer_fragments(
         &mut self,
         consumer: &str,
-        reponame: &String) -> Vec<String> {
+        reponame: &String
+        ) -> Vec<String> {
         if let Some(c) = self.consumers.iter().find(|c| c.dir == consumer) {
             if !c.fragments.is_empty() {
-                return c.fragments.iter().filter(|f| f.starts_with(reponame)).cloned().collect();
+                if reponame.len() > 0 {
+                    return c.fragments.iter().filter(|f| f.starts_with(reponame))
+                        .cloned().collect();
+                } else {
+                    return c.fragments.iter().cloned().collect();
+                }
             }
         }
         return Vec::new();
+    }
+
+    pub fn port_consumer_fragments(
+        &mut self,
+        src_consumer: &str,
+        dst_consumer: &str) -> Result<()> {
+        let frags = self.consumers.iter().find(|c| c.dir == src_consumer)
+            .map(|c| c.fragments.clone())
+            .ok_or_else(|| anyhow!("source consumer '{}' not found", src_consumer))?;
+
+        self.consumers.push(Consumer {
+            dir: dst_consumer.to_string(),
+            fragments: frags,
+        });
+
+        Ok(())
     }
 
     pub fn save_consumer_fragments(
@@ -366,6 +388,14 @@ impl Manifest {
     }
 
     // ------------ Consumer handlers -------------
+    pub fn check_if_consumer(&mut self, consumer: &str) -> bool {
+        self.consumers.iter().any(|c| c.dir == consumer)
+    }
+
+    pub fn get_full_consumer_list(&mut self) -> Vec<PathBuf> {
+        self.consumers.iter().map(|c| PathBuf::from(&c.dir)).collect()
+    }
+
     pub fn remove_consumer(&mut self, consumer: &str) {
         self.consumers.retain(|c| c.dir != consumer);
     }
