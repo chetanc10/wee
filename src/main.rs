@@ -3,10 +3,18 @@ mod frags;
 mod manifest;
 
 use std::path::PathBuf;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 
 use crate::manifest::Manifest;
+
+#[derive(Debug, Clone, PartialEq, ValueEnum)]
+pub enum FragmentType {
+    All,
+    Toml,
+    Script,
+    Bin,
+}
 
 #[derive(Parser)]
 #[command(name = "wee", version,
@@ -40,17 +48,37 @@ enum Commands {
         reponame: Option<String>,
     },
     /// Copy or Remove fragments from existing weeproj(s) for current project
+    /// Without 'sel_types', 'add', 'del' options, opens a selection dialog listing fragments
+    /// suited for current OS/Shell and adds user-selected fragments to current project
+    ///   - mise toml files (suffixed 'toml')
+    ///   - shell scripts (suffixed 'bash' 'zsh' 'fish' 'pwsh')
+    ///   - OS specific binaries (suffixed 'linux', 'win', 'macos')
+    /// Note: Other suffixed files are discarded
+    #[command(verbatim_doc_comment)]
     Frags {
         /// Optional repo-name
         /// Format: <github-user>/<github-repo>
-        /// Opens a selection dialog listing fragments suited for current OS/Shell
-        /// and ensures user-selected fragments alone are present in current project
-        ///   - mise toml files (suffixed 'toml')
-        ///   - shell scripts (suffixed 'bash' 'zsh' 'fish' 'pwsh')
-        ///   - OS specific binaries (suffixed 'linux', 'win', 'macos')
-        ///   Note: Other suffixed files are discarded
+        /// Default: All known repos
         #[arg(verbatim_doc_comment)]
         reponame: Option<String>,
+        /// Optional flag to select all fragments of specified class(es)
+        ///   - 'all' => all fragments
+        ///   - 'toml' => all toml fragments
+        ///   - 'script' => all script fragments
+        ///   - 'bin' => all binary executable fragments
+        /// Multiple classes are possible as comma-separated list
+        /// Default: None
+        #[arg(verbatim_doc_comment, long, value_enum, num_args(1..), value_delimiter = ',', requires = "reponame")]
+        sel_types: Option<Vec<FragmentType>>,
+        /// Optional comma separated list of fragments to add (mutually exclusive of 'sel_types')
+        /// Default: Empty 
+        #[arg(verbatim_doc_comment, long, num_args(1..), value_delimiter = ',', conflicts_with = "sel_types", requires = "reponame")]
+        add: Option<Vec<String>>,
+        /// Optional comma separated list of fragments  to remove (mutually exclusive of 'sel_types')
+        /// Default: Empty 
+        /// If both 'add' and 'del' lists are given, common fragments default to delete
+        #[arg(verbatim_doc_comment, long, num_args(1..), value_delimiter = ',', conflicts_with = "sel_types", requires = "reponame")]
+        del: Option<Vec<String>>,
     },
     /// Port a wee setup from an existing consumer to a newbie consumer
     Port {
@@ -103,14 +131,22 @@ fn main() -> anyhow::Result<()> {
         Commands::Upgrade { reponame } => {
             manf.upgrade_repo(reponame.as_deref().unwrap_or(""), cli.dry_run, cli.verbose)
         },
-        Commands::Frags{ reponame } => {
-            Ok(frags::run(&mut manf,
+        Commands::Frags{ reponame, sel_types, add, del} => {
+            let enable_sel_dialog = sel_types.as_ref().is_none_or(|v| v.is_empty()) &&
+                add.as_ref().is_none_or(|v| v.is_empty()) &&
+                del.as_ref().is_none_or(|v| v.is_empty());
+            Ok(frags::run(
+                    &mut manf,
                     reponame.as_deref(),
                     &std::env::current_dir()?.canonicalize()?,
-                    true,
+                    sel_types.as_deref().unwrap_or_default(),
+                    add.as_deref().unwrap_or_default(),
+                    del.as_deref().unwrap_or_default(),
+                    enable_sel_dialog,
                     false,
                     cli.dry_run,
-                    cli.verbose)?)
+                    cli.verbose)?
+            )
         },
         Commands::Refresh { subd, list } => {
             let dirs: Vec<PathBuf> = if list.is_empty() {

@@ -16,6 +16,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::FragmentType;
 use crate::manifest::Manifest;
 
 const WEE_EN_FILEPATH: &str = ".mise/wee_enabled.txt";
@@ -124,9 +125,7 @@ pub fn get_copy_path(repo: &String, name: &String, conf_d: &String) -> String {
 pub fn list_wee_repo_files(dir: &Path) -> Vec<String> {
     let os_suf = os_suffix();
     let shell_suf = shell_suffix();
-    let targets: Vec<String> = vec!["toml".to_string(),
-    shell_suf.to_string(),
-    os_suf.to_string()];
+    let targets: Vec<String> = vec!["toml".to_string(), shell_suf.to_string(), os_suf.to_string()];
     let mut results = Vec::new();
 
     let dentries: Vec<_> = match fs::read_dir(dir) {
@@ -271,8 +270,9 @@ fn pick_fragments(
     repodir: &Path,
     known_frags: Vec<String>,
     verbose: bool,
-    selection_needed: bool,
-    repo_frags_delete: bool
+    sel_types: &[FragmentType],
+    enable_sel_dialog: bool,
+    deleting_repo: bool
 ) -> Vec<String> {
     let os_suf = os_suffix();
     let shell_suf = shell_suffix();
@@ -283,8 +283,8 @@ fn pick_fragments(
     let mut result: Vec<String> = Vec::new();
 
     let reponame = format!("{}/{}",
-        repodir.file_name().unwrap().to_string_lossy(), 
-        repodir.parent().unwrap().file_name().unwrap().to_string_lossy()
+        repodir.parent().unwrap().file_name().unwrap().to_string_lossy(),
+        repodir.file_name().unwrap().to_string_lossy()
     );
     // Collect fragments from given repodir as per OS & shell along with
     // the fragment consumption status for current project directory
@@ -297,33 +297,47 @@ fn pick_fragments(
             let fname: String = f.as_ref().expect("REASON").file_name().to_string_lossy().into_owned();
             if !p.is_file() || !fname.ends_with(&dname) { continue; }
             if let Some(s) = about_frag(&p) {
-                frag_list.push((fname.to_string(),
-                format!("{}:{}", reponame, fname.to_string()), s));
+                frag_list.push(
+                    (fname.to_string(), format!("{}:{}", reponame, fname.to_string()), s)
+                );
             }
         }
     }
 
-    let mut selected: Vec<bool> = Vec::new();
-    if !repo_frags_delete {
+    let mut selected = vec![false; frag_list.len()];
+    if !deleting_repo {
         // Mark frag_list entries that are already consumed by current project
-        selected = vec![false; frag_list.len()];
         let mut i = 0;
         for (_, frag, _) in &frag_list {
-            if verbose && known_frags.contains(&frag){
-                println!("[VERBOSE] {}:{} is known", reponame, frag);
+            if verbose && known_frags.contains(&frag) {
+                println!("[VERBOSE] {} is known", frag);
             }
             selected[i] = known_frags.contains(&frag);
             i += 1;
         }
     }
+    if !sel_types.is_empty() {
+        for s in sel_types {
+            if *s == FragmentType::All { selected.fill(true); break; }
+            let suffix: &str = match s {
+                FragmentType::Toml   => ".toml",
+                FragmentType::Script => shell_suffix(),
+                FragmentType::Bin    => os_suffix(),
+                FragmentType::All    => unreachable!(),
+            };
+            for (i, (fname, _, _)) in frag_list.iter().enumerate() {
+                if fname.ends_with(&suffix) { selected[i] = true; }
+            }
+        }
+    }
     let bak_selected = selected.clone();
     let mut confirmed = false;
 
-    if selection_needed {
+    if enable_sel_dialog {
         (selected, confirmed) = allow_user_frag_selection(&frag_list, &mut selected);
     }
 
-    if !confirmed {
+    if !confirmed && sel_types.is_empty() {
         if verbose {
             println!("[VERBOSE] {} User didn't save selection. Restoring original..", reponame);
         }
@@ -425,70 +439,84 @@ pub fn validate_repodirs_list(repodirs: Vec<PathBuf>, op_str: String, dry_run: b
     return true;
 }
 
+// Add/Remove/Upgrade fragments with selection or direct user-fragment list
+// from a given repo or all repos (is user didn't specify a repo)
 pub fn run(
     manf: &mut Manifest,
     reponame: Option<&str>,
     project: &PathBuf,
-    selection_needed: bool,
-    repo_frags_delete: bool,
+    sel_types: &[FragmentType],
+    addreq_frags: &[String],
+    delreq_frags: &[String],
+    enable_sel_dialog: bool,
+    deleting_repo: bool,
     dry_run: bool,
     verbose: bool
 ) -> Result<()> {
     let repodirs = repo_name_to_path(reponame, manf);
-    let repodir_valid = validate_repodirs_list(repodirs.clone(), "fragment selection".to_string(), dry_run);
+    let repodir_valid = validate_repodirs_list(
+        repodirs.clone(),
+        "fragment selection".to_string(),
+        dry_run
+    );
     if !repodir_valid {
         return Err(anyhow!("{} No valid repodir: sel_need {} frags_del {}",
-                "✗".red(), selection_needed, repo_frags_delete));
+                "✗".red(), enable_sel_dialog, deleting_repo));
+    }
+    if (!addreq_frags.is_empty() || !delreq_frags.is_empty()) && repodirs.len() > 1 {
+        return Err(anyhow!("{} Cannot add/delete fragments from CLI without proper reponame",
+                "✗".red()));
     }
 
     let conf_d = project.join(".mise/conf.d");
 
     for repodir in repodirs {
         let reponame = format!("{}/{}",
-            repodir.file_name().unwrap().to_string_lossy(), 
-            repodir.parent().unwrap().file_name().unwrap().to_string_lossy()
+            repodir.parent().unwrap().file_name().unwrap().to_string_lossy(),
+            repodir.file_name().unwrap().to_string_lossy()
         );
         // Get known frags consumed by current project and user-chosen frags
         // and if there's no difference between 2 lists, no change, try next repodir
         let known_frags = manf.load_consumer_fragments(
             &project.to_string_lossy().into_owned(), &reponame);
         if verbose {
-            print!("[VERBOSE] known frags from {} (count={}): ", reponame, known_frags.len());
+            print!("[VERBOSE] known frags from {} (count={}):", reponame, known_frags.len());
             for f in &known_frags {
-                print!(" {}", &f.clone());
+                if let Some((_, frag)) = f.split_once(':') {
+                    print!(" {frag}");
+                }
             }
             println!("");
         }
-        let frags = pick_fragments(&repodir,
-            known_frags.clone(),
-            verbose,
-            selection_needed,
-            repo_frags_delete);
-        if {
-            let mut sfrags = frags.clone();
-            let mut skfrags = known_frags.clone();
-            sfrags.sort();
-            skfrags.sort();
-            sfrags == skfrags
-        } {
-            if verbose {
-                println!("[VERBOSE] {} no fragment changes from repo {}",
-                    "⚠".yellow(), reponame);
-            }
-            continue;
-        }
+        let selected_frags: Vec<String> = if !addreq_frags.is_empty() {
+            let os_suf = os_suffix();
+            let shell_suf = shell_suffix();
+            let targets: Vec<&str> = vec!["toml", &shell_suf, &os_suf];
+            addreq_frags.iter()
+                .filter(|n| { targets.iter().any(|t| n.ends_with(t)) })
+                .map(|f| format!("{reponame}:{f}"))
+                .collect()
+        } else {
+            pick_fragments(&repodir,
+                known_frags.clone(),
+                verbose,
+                sel_types,
+                enable_sel_dialog,
+                deleting_repo)
+        };
 
         // Check if atleast 1 fragment is toml
-        if !frags.iter().any(|s| s.ends_with("toml")) &&
-            !known_frags.iter().any(|s| s.ends_with("toml")) {
+        if !selected_frags.iter().any(|s| s.ends_with("toml")) &&
+           (addreq_frags.is_empty() || !addreq_frags.iter().any(|s| s.ends_with("toml"))) {
                 eprintln!("{} No toml fragment selected from {}", "✗".red(), reponame);
                 continue;
         }
 
-        // First identify added and deleted fragments
+        // First finalize added and deleted fragments
         let mut add_frags: Vec<String> = Vec::new();
         let mut del_frags: Vec<String> = Vec::new();
-        for frag in &frags {
+        for frag in &selected_frags {
+            // selected_frags is user-selected either from CLI or runtime selection-dialog
             if !known_frags.contains(&frag.clone()) {
                 if verbose {
                     println!("[VERBOSE] Add {}", &frag.clone());
@@ -496,18 +524,40 @@ pub fn run(
                 add_frags.push(frag.clone());
             }
         }
-        for frag in known_frags {
-            if !frags.contains(&frag.clone()) {
-                if verbose {
-                    println!("[VERBOSE] Del {}", &frag.clone());
+        if delreq_frags.is_empty() {
+            // delreq_frags empty => user deselected some known frags from selection-dialog
+            for frag in known_frags {
+                if !selected_frags.contains(&frag.clone()) {
+                    if verbose {
+                        println!("[VERBOSE] Del {}", &frag.clone());
+                    }
+                    del_frags.push(frag.clone());
                 }
-                del_frags.push(frag.clone());
+            }
+        } else {
+            // delreq_frags not empty => user specified deletable fragments from CLI
+            for frag in delreq_frags {
+                let f = format!("{}:{}", reponame, frag);
+                if known_frags.contains(&f.clone()) {
+                    if verbose {
+                        println!("[VERBOSE] Del {}", &frag.clone());
+                    }
+                    del_frags.push(f.clone());
+                }
             }
         }
 
         if verbose {
-            println!("{} fragments changed!", reponame);
+            println!("[VERBOSE] Changes were {} made in {} fragments for {}",
+                if add_frags.is_empty() && del_frags.is_empty() { "not" } else { "" },
+                reponame,
+                project.display()
+            );
         }
+        if add_frags.is_empty() && del_frags.is_empty() {
+            continue;
+        }
+
         let conf_d_bin = conf_d.join("bin");
         // Ensure local .mise/conf_d/bin directory is created
         if !add_frags.is_empty() && !conf_d_bin.exists() && !dry_run {
@@ -561,7 +611,9 @@ pub fn run(
 
         // Update consumer fragment list in manifest
         manf.save_consumer_fragments(project.to_str().unwrap(), &add_frags, &del_frags);
-        if !del_frags.is_empty() && add_frags.is_empty() {
+
+        // Cleanup empty .mise/conf.d directory in project
+        if !del_frags.is_empty() {
             let conf_d_empty = !fs::read_dir(&conf_d)
                 .map(|d| d.filter_map(|e| e.ok()).any(|e| e.path().is_file()))
                 .unwrap_or(false);

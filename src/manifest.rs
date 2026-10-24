@@ -244,6 +244,9 @@ impl Manifest {
             let _ = frags::run(self,
                 Some(&reponame),
                 &std::env::current_dir()?.canonicalize()?,
+                &[],
+                &[],
+                &[],
                 false,
                 false,
                 dry_run,
@@ -287,7 +290,13 @@ impl Manifest {
             let _ = frags::run(self,
                 Some(&repo_name),
                 &PathBuf::from(&c_dir),
-                false, true, dry_run, verbose)?;
+                &[],
+                &[],
+                &[],
+                false,
+                true,
+                dry_run,
+                verbose)?;
 
             for frag in &to_delete {
                 let path = PathBuf::from(&c_dir).join(frag);
